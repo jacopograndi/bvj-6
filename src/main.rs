@@ -1,4 +1,5 @@
-use bevy::prelude::*;
+use bevy::{ecs::spawn::SpawnIter, prelude::*, text::TextBounds};
+use bevy_asset_loader::prelude::*;
 
 fn main() {
     let mut app = App::new();
@@ -8,15 +9,81 @@ fn main() {
     app.add_event::<OnCombatStep>();
 
     app.insert_resource(CombatState::default());
+    app.insert_resource(ClearColor(Color::srgb(0.1, 0.1, 0.1)));
 
-    app.add_systems(Startup, spawn_units);
+    app.init_state::<AppStates>();
+
+    app.add_loading_state(
+        LoadingState::new(AppStates::AssetLoading)
+            .continue_to_state(AppStates::Combat)
+            .load_collection::<JamAssets>(),
+    );
+    app.add_systems(OnExit(AppStates::AssetLoading), prepare_atlases);
+
+    app.add_systems(OnEnter(AppStates::Combat), spawn_units);
     app.add_systems(
         Update,
-        (combat_next_step, combat_remove_dead_units).run_if(on_event::<OnCombatStep>),
+        (combat_next_step, combat_remove_dead_units)
+            .run_if(on_event::<OnCombatStep>)
+            .run_if(in_state(AppStates::Combat)),
     );
-    app.add_systems(Update, manual_combat_step);
+    app.add_systems(
+        Update,
+        manual_combat_step.run_if(in_state(AppStates::Combat)),
+    );
+
+    app.add_systems(Update, ui_trackers.run_if(in_state(AppStates::Combat)));
+    app.add_systems(
+        Update,
+        ui_ability_trackers.run_if(in_state(AppStates::Combat)),
+    );
 
     app.run();
+}
+
+#[derive(AssetCollection, Resource)]
+struct JamAssets {
+    #[asset(path = "images/units.png")]
+    units_image: Handle<Image>,
+    units_layout: Handle<TextureAtlasLayout>,
+
+    #[asset(path = "images/icons.png")]
+    icons_image: Handle<Image>,
+    icons_layout: Handle<TextureAtlasLayout>,
+
+    #[asset(path = "images/ability_background.png")]
+    ability_background_image: Handle<Image>,
+
+    #[asset(path = "fonts/IosevkaFixed-Medium.subset.ttf")]
+    font: Handle<Font>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]
+enum AppStates {
+    #[default]
+    AssetLoading,
+    Combat,
+}
+
+fn prepare_atlases(
+    mut handles: ResMut<JamAssets>,
+    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+) {
+    handles.units_layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
+        UVec2::splat(256),
+        2,
+        2,
+        None,
+        None,
+    ));
+
+    handles.icons_layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
+        UVec2::splat(128),
+        4,
+        4,
+        None,
+        None,
+    ));
 }
 
 fn manual_combat_step(keys: Res<ButtonInput<KeyCode>>, mut event: EventWriter<OnCombatStep>) {
@@ -150,8 +217,24 @@ impl CombatTarget {
 }
 
 #[derive(Clone, Debug)]
+enum CombatNumberSource {
+    Immediate(i32),
+    Unit(UnitValues),
+    UnitNegated(UnitValues),
+}
+impl CombatNumberSource {
+    fn solve(&self, unit: &Unit) -> i32 {
+        match &self {
+            Self::Immediate(amt) => *amt,
+            Self::Unit(v) => unit.value(&v).current,
+            Self::UnitNegated(v) => -unit.value(&v).current,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 struct CombatNumber {
-    amount: i32,
+    amount: CombatNumberSource,
     values: UnitValues,
 }
 
@@ -172,14 +255,8 @@ impl CombatTriggerWatch {
     fn check(&self, activated_ability: &ActivatedAbility) -> bool {
         match self {
             Self::Targeted => true,
-            Self::ValueIncrease(v) => activated_ability
-                .gains
-                .iter()
-                .any(|g| g.amount > 0 && &g.values == v),
-            Self::ValueDecrease(v) => activated_ability
-                .gains
-                .iter()
-                .any(|g| g.amount < 0 && &g.values == v),
+            Self::ValueIncrease(v) => activated_ability.gains.iter().any(|g| &g.values == v),
+            Self::ValueDecrease(v) => activated_ability.gains.iter().any(|g| &g.values == v),
         }
     }
 }
@@ -322,10 +399,15 @@ fn combat_next_step(mut state: ResMut<CombatState>, mut units_query: Query<(Enti
             // top of the stack reached, start resolving abilities
             state.stack_height -= 1;
             let activated_ability = state.stack.pop().unwrap();
-            for target in &activated_ability.targets {
-                if let Ok((_, mut target_unit)) = units_query.get_mut(*target) {
-                    for gain in &activated_ability.gains {
-                        target_unit.value_mut(&gain.values).current += gain.amount;
+            if let Ok(unit) = units_query
+                .get(activated_ability.source)
+                .map(|(_, u)| u.clone())
+            {
+                for target in &activated_ability.targets {
+                    if let Ok((_, mut target_unit)) = units_query.get_mut(*target) {
+                        for gain in &activated_ability.gains {
+                            target_unit.value_mut(&gain.values).current += gain.amount.solve(&unit);
+                        }
                     }
                 }
             }
@@ -432,7 +514,7 @@ fn activate_next_ability(
     if !ability
         .costs
         .iter()
-        .all(|cost| unit.value(&cost.values).current >= cost.amount)
+        .all(|cost| unit.value(&cost.values).current >= cost.amount.solve(unit))
     {
         debug!(target: "abilities", "unit {} can't pay {:?}", unit.to_string(), ability.costs);
         next_pass_ability(state, unit);
@@ -459,9 +541,10 @@ fn activate_next_ability(
         state.stack.push(act);
     }
 
+    let unit = unit.clone();
     if let Ok((_, mut unit_mut)) = units_query.get_mut(unit_entity) {
         for cost in &ability.costs {
-            unit_mut.value_mut(&cost.values).current -= cost.amount;
+            unit_mut.value_mut(&cost.values).current -= cost.amount.solve(&unit);
         }
     };
 
@@ -533,7 +616,7 @@ fn activate_next_response(
     if !ability
         .costs
         .iter()
-        .all(|cost| unit.value(&cost.values).current >= cost.amount)
+        .all(|cost| unit.value(&cost.values).current >= cost.amount.solve(unit))
     {
         debug!(target: "abilities", "unit {} can't pay {:?}", unit.to_string(), ability.costs);
         next_response_ability(state, unit);
@@ -582,9 +665,10 @@ fn activate_next_response(
     state.response_current_ability += 1;
     if any_activation {
         state.response_no_more_abilities = false;
+        let unit = unit.clone();
         if let Ok((_, mut unit_mut)) = units_query.get_mut(unit_entity) {
             for cost in &ability.costs {
-                unit_mut.value_mut(&cost.values).current -= cost.amount;
+                unit_mut.value_mut(&cost.values).current -= cost.amount.solve(&unit);
             }
         };
     }
@@ -592,77 +676,423 @@ fn activate_next_response(
     return true;
 }
 
-fn spawn_units(mut commands: Commands) {
-    commands.spawn((Unit {
-        life: UnitValue::full(10),
-        attack: UnitValue::full(10),
-        energy: UnitValue::full(10),
-        abilities: vec![
-            CombatAbility {
-                effects: vec![CombatEffect {
-                    target: CombatTarget::This,
-                    gains: vec![CombatNumber {
-                        amount: 1,
-                        values: UnitValues::Attack,
-                    }],
-                }],
-                costs: vec![CombatNumber {
-                    amount: 2,
-                    values: UnitValues::Energy,
-                }],
-                trigger: None,
-            },
-            CombatAbility {
-                effects: vec![CombatEffect {
-                    target: CombatTarget::EnemyWithMost(UnitValues::Life),
-                    gains: vec![CombatNumber {
-                        amount: -1,
-                        values: UnitValues::Life,
-                    }],
-                }],
-                costs: vec![CombatNumber {
-                    amount: 2,
-                    values: UnitValues::Energy,
-                }],
-                trigger: None,
-            },
+fn unit_value_icon_bundle(handles: &JamAssets, values: &UnitValues) -> impl Bundle {
+    (children![
+        (
+            Transform::from_scale(Vec3::splat(0.4)).with_translation(Vec3::new(0., -35., 3.)),
+            Sprite::from_atlas_image(
+                handles.icons_image.clone(),
+                TextureAtlas {
+                    layout: handles.icons_layout.clone(),
+                    index: match values {
+                        UnitValues::Life => 0,
+                        UnitValues::Attack => 1,
+                        UnitValues::Energy => 2,
+                    },
+                },
+            ),
+        ),
+        (
+            Transform::from_translation(Vec3::new(20., -20., 2.)),
+            Visibility::Visible,
+            children![
+                (
+                    Transform::from_translation(Vec3::Z * 2.),
+                    TextColor(Color::WHITE),
+                    Text2d::new("webs"),
+                    TextFont {
+                        font: handles.font.clone(),
+                        font_size: 20.0,
+                        ..default()
+                    },
+                    UiTracker::current(values.clone())
+                ),
+                (
+                    Transform::from_translation(Vec3::Z).with_scale(Vec3::splat(0.2)),
+                    Sprite {
+                        color: Color::BLACK,
+                        ..Sprite::from_atlas_image(
+                            handles.icons_image.clone(),
+                            TextureAtlas {
+                                layout: handles.icons_layout.clone(),
+                                index: 4,
+                            },
+                        )
+                    }
+                ),
+            ],
+        ),
+        (
+            Transform::from_translation(Vec3::splat(0.)),
+            Visibility::Visible,
+            children![
+                (
+                    Transform::from_translation(Vec3::Z * 2.),
+                    TextColor(Color::BLACK),
+                    Text2d::new("webs"),
+                    TextFont {
+                        font: handles.font.clone(),
+                        font_size: 30.0,
+                        ..default()
+                    },
+                    UiTracker::current(values.clone())
+                ),
+                (
+                    Transform::from_translation(Vec3::Z).with_scale(Vec3::splat(0.4)),
+                    Sprite::from_atlas_image(
+                        handles.icons_image.clone(),
+                        TextureAtlas {
+                            layout: handles.icons_layout.clone(),
+                            index: 4,
+                        },
+                    ),
+                ),
+            ],
+        ),
+    ],)
+}
+
+#[derive(Component, Debug, Clone, Default)]
+struct UiAbilityTracker {
+    ability: Option<CombatAbility>,
+    index: usize,
+}
+
+fn ui_ability_cost_single_bundle(handles: &JamAssets, ability: &CombatAbility) -> impl Bundle {
+    (
+        Transform::from_translation(Vec3::new(60., 30., 0.)),
+        Visibility::Visible,
+        children![
+            (
+                Transform::from_translation(Vec3::Z * 2.),
+                TextColor(Color::BLACK),
+                Text2d::new(format!("2")),
+                TextFont {
+                    font: handles.font.clone(),
+                    font_size: 12.0,
+                    ..default()
+                },
+            ),
+            (
+                Transform::from_translation(Vec3::Z * 1.).with_scale(Vec3::splat(0.1)),
+                Sprite::from_atlas_image(
+                    handles.icons_image.clone(),
+                    TextureAtlas {
+                        layout: handles.icons_layout.clone(),
+                        index: 4,
+                    },
+                ),
+            ),
         ],
-        owner: Owner::Player,
-    },));
-    commands.spawn((Unit {
-        life: UnitValue::full(10),
-        attack: UnitValue::full(10),
-        energy: UnitValue::full(10),
-        abilities: vec![
-            CombatAbility {
-                effects: vec![CombatEffect {
-                    target: CombatTarget::This,
-                    gains: vec![CombatNumber {
-                        amount: 1,
-                        values: UnitValues::Attack,
-                    }],
-                }],
-                costs: vec![CombatNumber {
-                    amount: 2,
-                    values: UnitValues::Energy,
-                }],
-                trigger: None,
-            },
-            CombatAbility {
-                effects: vec![CombatEffect {
-                    target: CombatTarget::EnemyWithMost(UnitValues::Life),
-                    gains: vec![CombatNumber {
-                        amount: -1,
-                        values: UnitValues::Life,
-                    }],
-                }],
-                costs: vec![CombatNumber {
-                    amount: 2,
-                    values: UnitValues::Energy,
-                }],
-                trigger: None,
-            },
+    )
+}
+
+fn ui_ability_cost_bundle(handles: &JamAssets, ability: CombatAbility) -> impl Bundle {
+    let costs = ability
+        .costs
+        .clone()
+        .into_iter()
+        .enumerate()
+        .map(move |(i, cost)| ui_ability_cost_single_bundle(handles, &ability));
+    (
+        Transform::from_translation(Vec3::new(60., 35., 0.)),
+        Visibility::Visible,
+        Children::spawn(SpawnIter(costs)),
+    )
+}
+
+fn ui_filled_ability_bundle(handles: &JamAssets, ability: CombatAbility) -> impl Bundle {
+    (
+        children![()],
+        Transform::from_translation(Vec3::Z * 2.),
+        TextColor(Color::BLACK),
+        Text2d::new("cost 2, enemy with most life loses 1 life"),
+        TextLayout::new(JustifyText::Left, LineBreak::WordBoundary),
+        TextBounds::from(Vec2::new(130., 60.)),
+        TextFont {
+            font: handles.font.clone(),
+            font_size: 12.,
+            line_height: bevy::text::LineHeight::RelativeToFont(0.8),
+            ..default()
+        },
+    )
+}
+
+fn ui_ability_bundle(handles: &JamAssets, index: usize) -> impl Bundle {
+    (
+        UiAbilityTracker {
+            ability: None,
+            index,
+        },
+        children![(
+            Transform::from_scale(Vec3::splat(0.5)),
+            Sprite::from_image(handles.ability_background_image.clone(),),
+        ),],
+    )
+}
+
+fn ui_ability_trackers(
+    mut commands: Commands,
+    mut trackers_query: Query<(Entity, &mut UiAbilityTracker)>,
+    unit_query: Query<&Unit>,
+    child_of_query: Query<&ChildOf>,
+    handles: Res<JamAssets>,
+) {
+    for (tracker_entity, mut ui_tracker) in &mut trackers_query {
+        if ui_tracker.ability.is_none() {
+            if let Some(unit) = child_of_query
+                .iter_ancestors(tracker_entity)
+                .find_map(|e| unit_query.get(e).ok())
+            {
+                if let Some(ability) = unit.abilities.get(ui_tracker.index) {
+                    let e = commands
+                        .spawn(ui_filled_ability_bundle(&handles, ability.clone()))
+                        .id();
+                    commands.entity(tracker_entity).add_child(e);
+                    ui_tracker.ability = Some(ability.clone());
+                }
+            } else {
+                panic!("despawn");
+            }
+        }
+    }
+}
+
+#[derive(Component, Debug, Clone)]
+struct UiTracker {
+    values: UnitValues,
+    amount: Option<i32>,
+    last_amount: Option<i32>,
+    track_current: bool,
+}
+impl UiTracker {
+    fn current(values: UnitValues) -> Self {
+        Self {
+            values,
+            amount: None,
+            last_amount: None,
+            track_current: true,
+        }
+    }
+    fn base(values: UnitValues) -> Self {
+        Self {
+            values,
+            amount: None,
+            last_amount: None,
+            track_current: false,
+        }
+    }
+}
+
+fn ui_trackers(
+    mut trackers_query: Query<(Entity, &mut UiTracker, &mut Text2d)>,
+    unit_query: Query<&Unit>,
+    child_of_query: Query<&ChildOf>,
+) {
+    for (tracker_entity, mut ui_tracker, mut text) in &mut trackers_query {
+        if let Some(unit) = child_of_query
+            .iter_ancestors(tracker_entity)
+            .find_map(|e| unit_query.get(e).ok())
+        {
+            ui_tracker.last_amount = ui_tracker.amount;
+            let current = unit.value(&ui_tracker.values).current;
+            ui_tracker.amount = Some(current);
+
+            text.0 = format!("{}", current);
+            if let (Some(amt), Some(last)) = (ui_tracker.amount, ui_tracker.last_amount) {
+                if amt != last {
+                    println!("PARTICLES");
+                }
+            }
+        } else {
+            panic!("despawn");
+        }
+    }
+}
+
+fn unit_bundle(handles: &JamAssets, index: usize, unit: Unit) -> impl Bundle {
+    (
+        children![
+            (
+                Transform::from_translation(Vec3::new(-50., -100., 1.)),
+                unit_value_icon_bundle(&handles, &UnitValues::Life),
+                Visibility::Visible,
+            ),
+            (
+                Transform::from_translation(Vec3::new(0., -100., 1.)),
+                unit_value_icon_bundle(&handles, &UnitValues::Attack),
+                Visibility::Visible,
+            ),
+            (
+                Transform::from_translation(Vec3::new(50., -100., 1.)),
+                unit_value_icon_bundle(&handles, &UnitValues::Energy),
+                Visibility::Visible,
+            ),
+            (
+                Transform::from_scale(Vec3::splat(0.7)),
+                Sprite::from_atlas_image(
+                    handles.units_image.clone(),
+                    TextureAtlas {
+                        layout: handles.units_layout.clone(),
+                        index,
+                    },
+                ),
+            ),
+            (
+                Transform::from_translation(Vec3::new(0., -200., 0.)),
+                ui_ability_bundle(&handles, 0),
+                Visibility::Visible,
+            ),
+            (
+                Transform::from_translation(Vec3::new(0., -250., 0.)),
+                ui_ability_bundle(&handles, 1),
+                Visibility::Visible,
+            ),
+            (
+                Transform::from_translation(Vec3::new(0., -300., 0.)),
+                ui_ability_bundle(&handles, 2),
+                Visibility::Visible,
+            ),
         ],
-        owner: Owner::Enemy,
-    },));
+        Visibility::Visible,
+        unit,
+    )
+}
+
+fn spawn_units(mut commands: Commands, handles: Res<JamAssets>) {
+    commands.spawn(Camera2d);
+
+    commands.spawn((
+        Transform::from_translation(Vec3::new(0., -100., 0.)),
+        unit_bundle(
+            &handles,
+            2,
+            Unit {
+                life: UnitValue::full(10),
+                attack: UnitValue::full(1),
+                energy: UnitValue::full(10),
+                abilities: vec![
+                    CombatAbility {
+                        effects: vec![CombatEffect {
+                            target: CombatTarget::EnemyWithMost(UnitValues::Life),
+                            gains: vec![CombatNumber {
+                                amount: CombatNumberSource::UnitNegated(UnitValues::Attack),
+                                values: UnitValues::Life,
+                            }],
+                        }],
+                        costs: vec![CombatNumber {
+                            amount: CombatNumberSource::Immediate(2),
+                            values: UnitValues::Energy,
+                        }],
+                        trigger: None,
+                    },
+                    CombatAbility {
+                        effects: vec![CombatEffect {
+                            target: CombatTarget::EnemyWithMost(UnitValues::Life),
+                            gains: vec![CombatNumber {
+                                amount: CombatNumberSource::Immediate(-1),
+                                values: UnitValues::Life,
+                            }],
+                        }],
+                        costs: vec![CombatNumber {
+                            amount: CombatNumberSource::Immediate(2),
+                            values: UnitValues::Energy,
+                        }],
+                        trigger: None,
+                    },
+                ],
+                owner: Owner::Player,
+            },
+        ),
+    ));
+
+    commands.spawn((
+        Transform::from_translation(Vec3::new(200., -100., 0.)),
+        unit_bundle(
+            &handles,
+            0,
+            Unit {
+                life: UnitValue::full(10),
+                attack: UnitValue::full(1),
+                energy: UnitValue::full(10),
+                abilities: vec![
+                    CombatAbility {
+                        effects: vec![CombatEffect {
+                            target: CombatTarget::EnemyWithMost(UnitValues::Life),
+                            gains: vec![CombatNumber {
+                                amount: CombatNumberSource::UnitNegated(UnitValues::Attack),
+                                values: UnitValues::Life,
+                            }],
+                        }],
+                        costs: vec![CombatNumber {
+                            amount: CombatNumberSource::Immediate(2),
+                            values: UnitValues::Energy,
+                        }],
+                        trigger: None,
+                    },
+                    CombatAbility {
+                        effects: vec![CombatEffect {
+                            target: CombatTarget::EnemyWithMost(UnitValues::Life),
+                            gains: vec![CombatNumber {
+                                amount: CombatNumberSource::Immediate(-1),
+                                values: UnitValues::Life,
+                            }],
+                        }],
+                        costs: vec![CombatNumber {
+                            amount: CombatNumberSource::Immediate(2),
+                            values: UnitValues::Energy,
+                        }],
+                        trigger: None,
+                    },
+                ],
+                owner: Owner::Player,
+            },
+        ),
+    ));
+
+    commands.spawn((
+        Transform::from_translation(Vec3::new(0., 300., 0.)),
+        unit_bundle(
+            &handles,
+            1,
+            Unit {
+                life: UnitValue::full(10),
+                attack: UnitValue::full(10),
+                energy: UnitValue::full(10),
+                abilities: vec![
+                    // cost 2, gain 1 attack
+                    CombatAbility {
+                        effects: vec![CombatEffect {
+                            target: CombatTarget::This,
+                            gains: vec![CombatNumber {
+                                amount: CombatNumberSource::Immediate(1),
+                                values: UnitValues::Attack,
+                            }],
+                        }],
+                        costs: vec![CombatNumber {
+                            amount: CombatNumberSource::Immediate(2),
+                            values: UnitValues::Energy,
+                        }],
+                        trigger: None,
+                    },
+                    // cost 2, enemy with most life loses 1 life
+                    CombatAbility {
+                        effects: vec![CombatEffect {
+                            target: CombatTarget::EnemyWithMost(UnitValues::Life),
+                            gains: vec![CombatNumber {
+                                amount: CombatNumberSource::Immediate(-1),
+                                values: UnitValues::Life,
+                            }],
+                        }],
+                        costs: vec![CombatNumber {
+                            amount: CombatNumberSource::Immediate(2),
+                            values: UnitValues::Energy,
+                        }],
+                        trigger: None,
+                    },
+                ],
+                owner: Owner::Enemy,
+            },
+        ),
+    ));
 }

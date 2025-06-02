@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy = { version = "0.16", features = ["mp3"] }
+bevy_asset_loader = "0.23.0"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 
