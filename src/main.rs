@@ -14,6 +14,9 @@ use blueprints::*;
 mod combat;
 use combat::*;
 
+mod map;
+use map::*;
+
 fn main() {
     let mut app = App::new();
 
@@ -42,16 +45,23 @@ fn main() {
 
     app.init_state::<AppStates>();
 
-    app.add_plugins(CombatPlugin);
+    app.add_plugins((CombatPlugin, MapPlugin));
 
     app.add_loading_state(
         LoadingState::new(AppStates::AssetLoading)
-            .continue_to_state(AppStates::Combat)
+            .continue_to_state(AppStates::Map)
             .load_collection::<JamAssets>(),
     );
     app.add_systems(OnExit(AppStates::AssetLoading), prepare_atlases);
+    app.add_systems(OnExit(AppStates::AssetLoading), spawn_camera);
+    app.add_systems(OnExit(AppStates::Map), destroy_everything);
+    app.add_systems(OnExit(AppStates::Combat), destroy_everything);
 
     app.add_systems(Update, debug_resolution);
+
+    let bp = Blueprints::construct();
+    app.insert_resource(PartyState::construct(&bp));
+    app.insert_resource(bp);
 
     app.run();
 }
@@ -65,6 +75,10 @@ struct JamAssets {
     #[asset(path = "images/units.png")]
     units_image: Handle<Image>,
     units_layout: Handle<TextureAtlasLayout>,
+
+    #[asset(path = "images/units_small.png")]
+    units_small_image: Handle<Image>,
+    units_small_layout: Handle<TextureAtlasLayout>,
 
     #[asset(path = "images/icons.png")]
     icons_image: Handle<Image>,
@@ -98,6 +112,23 @@ struct JamAssets {
     #[asset(path = "images/combat_draw.png")]
     combat_draw_image: Handle<Image>,
 
+    #[asset(path = "images/tile_forest.png")]
+    tile_forest_image: Handle<Image>,
+    #[asset(path = "images/tile_plains.png")]
+    tile_plains_image: Handle<Image>,
+    #[asset(path = "images/tile_mountain.png")]
+    tile_mountain_image: Handle<Image>,
+    #[asset(path = "images/tile_home.png")]
+    tile_home_image: Handle<Image>,
+    #[asset(path = "images/tile_town1.png")]
+    tile_town1_image: Handle<Image>,
+    #[asset(path = "images/tile_town2.png")]
+    tile_town2_image: Handle<Image>,
+    #[asset(path = "images/tile_tower.png")]
+    tile_tower_image: Handle<Image>,
+    #[asset(path = "images/tile_castle.png")]
+    tile_castle_image: Handle<Image>,
+
     #[asset(path = "fonts/IosevkaFixed-Medium.subset.ttf")]
     font: Handle<Font>,
 }
@@ -107,6 +138,7 @@ enum AppStates {
     #[default]
     AssetLoading,
     Combat,
+    Map,
 }
 
 fn prepare_atlases(
@@ -115,6 +147,14 @@ fn prepare_atlases(
 ) {
     handles.units_layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
         UVec2::splat(256),
+        4,
+        4,
+        None,
+        None,
+    ));
+
+    handles.units_small_layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
+        UVec2::splat(64),
         4,
         4,
         None,
@@ -130,8 +170,18 @@ fn prepare_atlases(
     ));
 }
 
-fn spawn_units(mut commands: Commands, handles: Res<JamAssets>) {
+#[derive(Component)]
+struct KeepBetweenStates;
+
+fn destroy_everything(mut commands: Commands, query: Query<Entity, Without<KeepBetweenStates>>) {
+    for entity in &query {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn spawn_camera(mut commands: Commands) {
     commands.spawn((
+        KeepBetweenStates,
         Camera2d,
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::FixedVertical {
@@ -140,38 +190,23 @@ fn spawn_units(mut commands: Commands, handles: Res<JamAssets>) {
             ..OrthographicProjection::default_2d()
         }),
     ));
+}
 
-    let mut rng = ChaCha8Rng::from_rng(thread_rng()).unwrap();
+#[derive(Resource)]
+struct PartyState {
+    units: Vec<Unit>,
+}
 
-    let blueprints = Blueprints::construct();
-
-    for i in 0..5 {
-        let unit = blueprints.units[rng.gen_range(0..blueprints.units.len())].clone();
-        commands.spawn((
-            Transform::from_translation(Vec3::new(300. - i as f32 * 150., 250., 0.))
-                .with_scale(Vec3::splat(0.6)),
-            unit_bundle(
-                &handles,
-                unit.sprite_index,
-                Unit {
-                    owner: Owner::Enemy,
-                    ..unit
-                },
-            ),
-        ));
-
-        let unit = blueprints.units[rng.gen_range(0..blueprints.units.len())].clone();
-        commands.spawn((
-            Transform::from_translation(Vec3::new(300. - i as f32 * 150., -100., 0.))
-                .with_scale(Vec3::splat(0.6)),
-            unit_bundle(
-                &handles,
-                unit.sprite_index,
-                Unit {
-                    owner: Owner::Player,
-                    ..unit
-                },
-            ),
-        ));
+impl PartyState {
+    fn construct(bp: &Blueprints) -> Self {
+        let mut units = vec![
+            bp.units[0].clone(),
+            bp.units[1].clone(),
+            bp.units[2].clone(),
+        ];
+        for unit in &mut units {
+            unit.owner = Owner::Player
+        }
+        Self { units }
     }
 }

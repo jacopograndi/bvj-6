@@ -26,7 +26,7 @@ impl Plugin for CombatPlugin {
         app.add_systems(
             Update,
             (ui_ability_trackers, ui_value_trackers, ui_name_trackers)
-                .run_if(in_state(AppStates::Combat)),
+                .run_if(in_state(AppStates::Combat).or(in_state(AppStates::Map))),
         );
 
         app.add_systems(Update, update_particles.run_if(in_state(AppStates::Combat)));
@@ -159,8 +159,8 @@ impl CombatTarget {
             CombatTarget::AllOtherAlly => format!("any other ally"),
             CombatTarget::EnemyWithMost(v) => format!("the enemy with the most {}", v.describe()),
             CombatTarget::EnemyWithLeast(v) => format!("the enemy with the least {}", v.describe()),
-            CombatTarget::AllyWithMost(v) => format!("the enemy with the most {}", v.describe()),
-            CombatTarget::AllyWithLeast(v) => format!("the enemy with the least {}", v.describe()),
+            CombatTarget::AllyWithMost(v) => format!("the ally with the most {}", v.describe()),
+            CombatTarget::AllyWithLeast(v) => format!("the ally with the least {}", v.describe()),
             CombatTarget::AbilitySource => format!("the targeter"),
             CombatTarget::AbilityTarget => format!("the target"),
             CombatTarget::Specific(_) => format!("that unit"),
@@ -1513,6 +1513,9 @@ fn detect_end(
         .map(|(_, u)| u)
         .partition(|u| u.owner == Owner::Player);
 
+    // on return click: pass results to the map, show results
+    // then map is shown
+
     let win = enemies.is_empty();
     let lose = players.is_empty();
     let draw = state.turn_number > 100;
@@ -1557,3 +1560,40 @@ fn detect_end(
         ));
     }
 }
+
+fn spawn_units(mut commands: Commands, handles: Res<JamAssets>) {
+    let mut rng = ChaCha8Rng::from_rng(thread_rng()).unwrap();
+
+    let blueprints = Blueprints::construct();
+
+    for i in 0..5 {
+        let unit = blueprints.units[rng.gen_range(0..blueprints.units.len())].clone();
+        commands.spawn((
+            Transform::from_translation(Vec3::new(300. - i as f32 * 150., 250., 0.))
+                .with_scale(Vec3::splat(0.6)),
+            unit_bundle(
+                &handles,
+                unit.sprite_index,
+                Unit {
+                    owner: Owner::Enemy,
+                    ..unit
+                },
+            ),
+        ));
+
+        let unit = blueprints.units[rng.gen_range(0..blueprints.units.len())].clone();
+        commands.spawn((
+            Transform::from_translation(Vec3::new(300. - i as f32 * 150., -100., 0.))
+                .with_scale(Vec3::splat(0.6)),
+            unit_bundle(
+                &handles,
+                unit.sprite_index,
+                Unit {
+                    owner: Owner::Player,
+                    ..unit
+                },
+            ),
+        ));
+    }
+}
+

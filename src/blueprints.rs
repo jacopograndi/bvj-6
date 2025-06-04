@@ -1,5 +1,6 @@
 use crate::*;
 
+#[derive(Resource)]
 pub struct Blueprints {
     pub units: Vec<Unit>,
 }
@@ -353,6 +354,7 @@ impl Blueprints {
         ];
 
         let units = vec![
+            // basic attack to damage
             Unit {
                 name: format!("Spark"),
                 sprite_index: 0,
@@ -378,6 +380,7 @@ impl Blueprints {
                     },
                 ],
             },
+            // heal 1 aoe
             Unit {
                 name: format!("Elena"),
                 sprite_index: 6,
@@ -393,6 +396,7 @@ impl Blueprints {
                     trigger: None,
                 }],
             },
+            // enemy lifeloss is attack, good damager
             Unit {
                 name: format!("Jade"),
                 sprite_index: 2,
@@ -400,7 +404,7 @@ impl Blueprints {
                 experience: 0,
                 life: UnitValue::full(8),
                 attack: UnitValue::full(0),
-                energy: UnitValue::full(6),
+                energy: UnitValue::full(0),
                 owner: Owner::Enemy,
                 abilities: vec![
                     CombatAbility {
@@ -408,12 +412,12 @@ impl Blueprints {
                             CombatTarget::EnemyWithMost(life()),
                             vec![num(imm(-2), life())],
                         )],
-                        costs: vec![num(imm(1), attack())],
+                        costs: vec![num(imm(1), attack()), num(imm(1), energy())],
                         trigger: None,
                     },
                     CombatAbility {
                         effects: vec![fx(CombatTarget::This, vec![num(imm(1), attack())])],
-                        costs: vec![num(imm(2), energy())],
+                        costs: vec![],
                         trigger: Some(CombatTrigger {
                             target: CombatTarget::AllEnemy,
                             watch: CombatTriggerWatch::ValueDecrease(life()),
@@ -421,30 +425,188 @@ impl Blueprints {
                     },
                 ],
             },
+            // ally lifeloss is 1 atk to them, bad atk to damage
+            Unit {
+                name: format!("Kramer"),
+                sprite_index: 3,
+                level: 1,
+                experience: 0,
+                life: UnitValue::full(18),
+                attack: UnitValue::full(4),
+                energy: UnitValue::full(0),
+                owner: Owner::Enemy,
+                abilities: vec![
+                    CombatAbility {
+                        effects: vec![fx(CombatTarget::AbilityTarget, vec![num(imm(1), attack())])],
+                        costs: vec![],
+                        trigger: Some(CombatTrigger {
+                            target: CombatTarget::AllAlly,
+                            watch: CombatTriggerWatch::ValueDecrease(life()),
+                        }),
+                    },
+                    CombatAbility {
+                        effects: vec![fx(
+                            CombatTarget::EnemyWithMost(energy()),
+                            vec![num(imm(-1), life())],
+                        )],
+                        costs: vec![num(imm(2), attack())],
+                        trigger: None,
+                    },
+                ],
+            },
+            // ally lifegain is 1 atk to them, bad healer
+            Unit {
+                name: format!("Poppy"),
+                sprite_index: 5,
+                level: 1,
+                experience: 0,
+                life: UnitValue::full(12),
+                attack: UnitValue::full(4),
+                energy: UnitValue::full(10),
+                owner: Owner::Enemy,
+                abilities: vec![
+                    CombatAbility {
+                        effects: vec![fx(CombatTarget::AbilityTarget, vec![num(imm(1), attack())])],
+                        costs: vec![num(imm(3), energy())],
+                        trigger: Some(CombatTrigger {
+                            target: CombatTarget::AllOtherAlly,
+                            watch: CombatTriggerWatch::ValueIncrease(life()),
+                        }),
+                    },
+                    CombatAbility {
+                        effects: vec![fx(
+                            CombatTarget::AllyWithLeast(life()),
+                            vec![num(imm(3), life())],
+                        )],
+                        costs: vec![num(imm(5), energy())],
+                        trigger: None,
+                    },
+                ],
+            },
+            // ally gainattack is scaling damage
             Unit {
                 name: format!("Roth"),
                 sprite_index: 7,
                 level: 1,
                 experience: 0,
-                life: UnitValue::full(14),
+                life: UnitValue::full(8),
+                attack: UnitValue::full(2),
+                energy: UnitValue::full(8),
+                owner: Owner::Enemy,
+                abilities: vec![CombatAbility {
+                    effects: vec![fx(
+                        CombatTarget::EnemyWithMost(life()),
+                        vec![num(src_unit_neg(attack()), life())],
+                    )],
+                    costs: vec![num(imm(4), energy())],
+                    trigger: Some(CombatTrigger {
+                        target: CombatTarget::AllAlly,
+                        watch: CombatTriggerWatch::ValueIncrease(attack()),
+                    }),
+                }],
+            },
+            // ally gainlife is scaling damage
+            Unit {
+                name: format!("Scarlet"),
+                sprite_index: 8,
+                level: 1,
+                experience: 0,
+                life: UnitValue::full(5),
+                attack: UnitValue::full(5),
+                energy: UnitValue::full(8),
+                owner: Owner::Enemy,
+                abilities: vec![CombatAbility {
+                    effects: vec![
+                        fx(
+                            CombatTarget::EnemyWithMost(life()),
+                            vec![num(src_unit_neg(attack()), life())],
+                        ),
+                        fx(CombatTarget::AbilityTarget, vec![num(imm(-1), life())]),
+                    ],
+                    costs: vec![num(imm(4), energy())],
+                    trigger: Some(CombatTrigger {
+                        target: CombatTarget::AllAlly,
+                        watch: CombatTriggerWatch::ValueIncrease(life()),
+                    }),
+                }],
+            },
+            // bloodletting for attack
+            Unit {
+                name: format!("Preston"),
+                sprite_index: 14,
+                level: 1,
+                experience: 0,
+                life: UnitValue::full(10),
+                attack: UnitValue::full(0),
+                energy: UnitValue::full(10),
+                owner: Owner::Enemy,
+                abilities: vec![
+                    CombatAbility {
+                        effects: vec![fx(CombatTarget::AllOther, vec![num(imm(1), attack())])],
+                        costs: vec![num(imm(2), life()), num(imm(6), energy())],
+                        trigger: None,
+                    },
+                    CombatAbility {
+                        effects: vec![fx(
+                            CombatTarget::EnemyWithMost(life()),
+                            vec![num(imm(-2), life())],
+                        )],
+                        costs: vec![num(imm(3), attack())],
+                        trigger: None,
+                    },
+                ],
+            },
+            // bloodletting for energy, energy drainer
+            Unit {
+                name: format!("Luna"),
+                sprite_index: 13,
+                level: 1,
+                experience: 0,
+                life: UnitValue::full(10),
                 attack: UnitValue::full(0),
                 energy: UnitValue::full(4),
                 owner: Owner::Enemy,
                 abilities: vec![
                     CombatAbility {
                         effects: vec![fx(
-                            CombatTarget::AllyWithMost(attack()),
-                            vec![num(imm(2), attack())],
+                            CombatTarget::AllyWithMost(energy()),
+                            vec![num(imm(1), energy())],
                         )],
-                        costs: vec![num(imm(1), energy())],
+                        costs: vec![num(imm(4), life())],
+                        trigger: None,
+                    },
+                    CombatAbility {
+                        effects: vec![fx(
+                            CombatTarget::EnemyWithMost(energy()),
+                            vec![num(imm(-2), energy())],
+                        )],
+                        costs: vec![num(imm(4), energy())],
+                        trigger: None,
+                    },
+                ],
+            },
+            // attack on enemy targeted, gives back to the team
+            Unit {
+                name: format!("Thelonius"),
+                sprite_index: 10,
+                level: 1,
+                experience: 0,
+                life: UnitValue::full(4),
+                attack: UnitValue::full(0),
+                energy: UnitValue::full(0),
+                owner: Owner::Enemy,
+                abilities: vec![
+                    CombatAbility {
+                        effects: vec![fx(CombatTarget::This, vec![num(imm(1), attack())])],
+                        costs: vec![],
                         trigger: Some(CombatTrigger {
-                            target: CombatTarget::This,
-                            watch: CombatTriggerWatch::ValueIncrease(life()),
+                            target: CombatTarget::AllEnemy,
+                            watch: CombatTriggerWatch::Targeted,
                         }),
                     },
                     CombatAbility {
-                        effects: vec![fx(CombatTarget::This, vec![num(imm(1), life())])],
-                        costs: vec![num(imm(1), attack())],
+                        effects: vec![fx(CombatTarget::AllOtherAlly, vec![num(imm(1), attack())])],
+                        costs: vec![num(imm(3), attack())],
                         trigger: None,
                     },
                 ],
