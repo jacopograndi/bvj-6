@@ -1,3 +1,5 @@
+use rand::seq::SliceRandom;
+
 use crate::*;
 
 #[derive(Resource)]
@@ -127,6 +129,7 @@ impl Blueprints {
                 sprite_index: 2,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(24),
                 attack: UnitValue::full(5),
                 energy: UnitValue::full(7),
@@ -142,6 +145,7 @@ impl Blueprints {
                 sprite_index: 6,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(18),
                 attack: UnitValue::full(1),
                 energy: UnitValue::full(10),
@@ -164,6 +168,7 @@ impl Blueprints {
                 sprite_index: 0,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(15),
                 attack: UnitValue::full(1),
                 energy: UnitValue::full(16),
@@ -179,6 +184,7 @@ impl Blueprints {
                 sprite_index: 11,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(30),
                 attack: UnitValue::full(2),
                 energy: UnitValue::full(6),
@@ -201,6 +207,7 @@ impl Blueprints {
                 sprite_index: 11,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(20),
                 attack: UnitValue::full(2),
                 energy: UnitValue::full(20),
@@ -223,6 +230,7 @@ impl Blueprints {
                 sprite_index: 7,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(20),
                 attack: UnitValue::full(2),
                 energy: UnitValue::full(20),
@@ -238,6 +246,7 @@ impl Blueprints {
                 sprite_index: 12,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(7),
                 attack: UnitValue::full(1),
                 energy: UnitValue::full(12),
@@ -266,6 +275,7 @@ impl Blueprints {
                 sprite_index: 8,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(12),
                 attack: UnitValue::full(1),
                 energy: UnitValue::full(24),
@@ -288,6 +298,7 @@ impl Blueprints {
                 sprite_index: 1,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(24),
                 attack: UnitValue::full(5),
                 energy: UnitValue::full(3),
@@ -303,6 +314,7 @@ impl Blueprints {
                 sprite_index: 10,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(3),
                 attack: UnitValue::full(1),
                 energy: UnitValue::full(10),
@@ -328,6 +340,7 @@ impl Blueprints {
                 sprite_index: 4,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(17),
                 attack: UnitValue::full(3),
                 energy: UnitValue::full(8),
@@ -360,6 +373,7 @@ impl Blueprints {
                 sprite_index: 0,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(10),
                 attack: UnitValue::full(4),
                 energy: UnitValue::full(4),
@@ -386,6 +400,7 @@ impl Blueprints {
                 sprite_index: 6,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(12),
                 attack: UnitValue::full(0),
                 energy: UnitValue::full(4),
@@ -402,6 +417,7 @@ impl Blueprints {
                 sprite_index: 2,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(8),
                 attack: UnitValue::full(0),
                 energy: UnitValue::full(0),
@@ -431,6 +447,7 @@ impl Blueprints {
                 sprite_index: 3,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(18),
                 attack: UnitValue::full(4),
                 energy: UnitValue::full(0),
@@ -460,6 +477,7 @@ impl Blueprints {
                 sprite_index: 5,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(12),
                 attack: UnitValue::full(4),
                 energy: UnitValue::full(10),
@@ -489,6 +507,7 @@ impl Blueprints {
                 sprite_index: 7,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(8),
                 attack: UnitValue::full(2),
                 energy: UnitValue::full(8),
@@ -511,6 +530,7 @@ impl Blueprints {
                 sprite_index: 8,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(5),
                 attack: UnitValue::full(5),
                 energy: UnitValue::full(8),
@@ -536,6 +556,7 @@ impl Blueprints {
                 sprite_index: 14,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(10),
                 attack: UnitValue::full(0),
                 energy: UnitValue::full(10),
@@ -562,6 +583,7 @@ impl Blueprints {
                 sprite_index: 13,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(10),
                 attack: UnitValue::full(0),
                 energy: UnitValue::full(4),
@@ -591,6 +613,7 @@ impl Blueprints {
                 sprite_index: 10,
                 level: 1,
                 experience: 0,
+                max_experience: 10,
                 life: UnitValue::full(4),
                 attack: UnitValue::full(0),
                 energy: UnitValue::full(0),
@@ -615,4 +638,28 @@ impl Blueprints {
 
         Blueprints { units }
     }
+}
+
+pub fn level_up(rng: &mut ChaCha8Rng) -> Vec<CombatNumber> {
+    let how_many = [1, 2, 3]
+        .choose_weighted(rng, |i| (1. / (*i as f32).powi(2)))
+        .expect("can't choose level up");
+
+    let how_much_weights = [0., 0.1, 0.0001];
+
+    (0..*how_many)
+        .map(|_| {
+            let how_much = [1, 2]
+                .choose_weighted(rng, |i| how_much_weights[*i])
+                .expect("can't choose level up amount");
+            let values = [UnitValues::Attack, UnitValues::Life, UnitValues::Energy]
+                .choose(rng)
+                .expect("can't choose level up attribute");
+
+            CombatNumber {
+                source: CombatNumberSource::Immediate(*how_much as i32),
+                values: values.clone(),
+            }
+        })
+        .collect()
 }

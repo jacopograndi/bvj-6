@@ -4,8 +4,12 @@ pub struct CombatPlugin;
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(CombatState::default());
-        app.add_systems(OnEnter(AppStates::Combat), setup_combo_animation);
-        app.add_systems(OnEnter(AppStates::Combat), spawn_units);
+
+        app.add_systems(
+            OnEnter(GameStates::Combat),
+            (setup_combo_animation, spawn_units, reset_combat),
+        );
+
         app.add_systems(
             Update,
             (
@@ -16,25 +20,35 @@ impl Plugin for CombatPlugin {
             )
                 .chain()
                 .run_if(on_event::<OnCombatStep>)
-                .run_if(in_state(AppStates::Combat)),
+                .run_if(in_state(GameStates::Combat)),
         );
         app.add_systems(
             Update,
-            manual_combat_step.run_if(in_state(AppStates::Combat)),
+            (
+                manual_combat_step,
+                update_combo_animation,
+                update_particles,
+                end_combat_sequence,
+            )
+                .run_if(in_state(GameStates::Combat)),
         );
 
         app.add_systems(
             Update,
-            (ui_ability_trackers, ui_value_trackers, ui_name_trackers)
-                .run_if(in_state(AppStates::Combat).or(in_state(AppStates::Map))),
-        );
-
-        app.add_systems(Update, update_particles.run_if(in_state(AppStates::Combat)));
-        app.add_systems(
-            Update,
-            update_combo_animation.run_if(in_state(AppStates::Combat)),
+            (
+                ui_ability_trackers,
+                ui_value_trackers,
+                ui_name_trackers,
+                ui_level_trackers,
+                ui_experience_trackers,
+            )
+                .run_if(in_state(GameStates::Combat).or(in_state(GameStates::Map))),
         );
     }
+}
+
+fn reset_combat(mut state: ResMut<CombatState>) {
+    *state = CombatState::default();
 }
 
 fn manual_combat_step(keys: Res<ButtonInput<KeyCode>>, mut event: EventWriter<OnCombatStep>) {
@@ -57,6 +71,7 @@ pub struct Unit {
     pub sprite_index: usize,
     pub level: i32,
     pub experience: i32,
+    pub max_experience: i32,
 }
 
 impl Default for Unit {
@@ -71,6 +86,7 @@ impl Default for Unit {
             sprite_index: 0,
             level: 1,
             experience: 0,
+            max_experience: 1,
         }
     }
 }
@@ -81,6 +97,7 @@ impl Unit {
             UnitValues::Life => self.life.clone(),
             UnitValues::Attack => self.attack.clone(),
             UnitValues::Energy => self.energy.clone(),
+            _ => unreachable!(), // risky
         }
     }
 
@@ -89,6 +106,7 @@ impl Unit {
             UnitValues::Life => &mut self.life,
             UnitValues::Attack => &mut self.attack,
             UnitValues::Energy => &mut self.energy,
+            _ => unreachable!(), // risky
         }
     }
 }
@@ -112,6 +130,7 @@ pub enum UnitValues {
     Life,
     Attack,
     Energy,
+    Level,
 }
 
 impl UnitValues {
@@ -120,6 +139,7 @@ impl UnitValues {
             UnitValues::Life => 0,
             UnitValues::Attack => 1,
             UnitValues::Energy => 2,
+            UnitValues::Level => 3,
         }
     }
     pub fn describe(&self) -> String {
@@ -127,6 +147,7 @@ impl UnitValues {
             UnitValues::Life => format!("life"),
             UnitValues::Attack => format!("attack"),
             UnitValues::Energy => format!("energy"),
+            _ => format!(""),
         }
     }
 }
@@ -462,6 +483,11 @@ pub fn combat_next_step(
     mut state: ResMut<CombatState>,
     mut units_query: Query<(Entity, &mut Unit)>,
 ) {
+    let draw = state.turn_number > 100;
+    if draw {
+        return;
+    }
+
     debug!(target: "abilities", "start step!");
     for (entity, unit) in &units_query {
         debug!(target: "abilities", "{}: {}", entity, unit.to_string());
@@ -829,6 +855,141 @@ fn activate_next_response(
     return false;
 }
 
+#[derive(Component)]
+struct UiExperienceTracker;
+
+fn ui_experience_trackers(
+    mut trackers_query: Query<(Entity, &UiExperienceTracker, &mut Transform)>,
+    unit_query: Query<&Unit>,
+    child_of_query: Query<&ChildOf>,
+) {
+    for (tracker_entity, _, mut tr) in &mut trackers_query {
+        if let Some(unit) = child_of_query
+            .iter_ancestors(tracker_entity)
+            .find_map(|e| unit_query.get(e).ok())
+        {
+            let f = unit.experience as f32 / unit.max_experience as f32;
+            tr.scale.x = f;
+        } else {
+            panic!("despawn");
+        }
+    }
+}
+
+fn unit_experience_bundle(handles: &JamAssets) -> impl Bundle {
+    (children![
+        (
+            Transform::from_scale(Vec3::new(0.8, 1.2, 1.)).with_translation(Vec3::new(0., 0., 0.9)),
+            Sprite {
+                color: Color::srgb(0., 0., 0.),
+                ..Sprite::from_image(handles.exp_bar_image.clone(),)
+            },
+        ),
+        (
+            Transform::from_translation(Vec3::new(-70., 0., 0.)),
+            Visibility::Visible,
+            UiExperienceTracker,
+            children![(
+                Transform::from_scale(Vec3::new(0.75, 0.8, 1.))
+                    .with_translation(Vec3::new(70., 0., 1.)),
+                Sprite {
+                    color: Color::srgb(0.2, 0.8, 0.),
+                    ..Sprite::from_image(handles.exp_bar_image.clone(),)
+                }
+            )]
+        ),
+    ],)
+}
+
+fn unit_level_icon_bundle(handles: &JamAssets) -> impl Bundle {
+    (children![
+        (
+            Transform::from_scale(Vec3::splat(0.4)).with_translation(Vec3::new(0., -35., 3.)),
+            Sprite::from_atlas_image(
+                handles.icons_image.clone(),
+                TextureAtlas {
+                    layout: handles.icons_layout.clone(),
+                    index: 3,
+                },
+            ),
+        ),
+        (
+            Transform::from_translation(Vec3::splat(0.)),
+            Visibility::Visible,
+            children![
+                (
+                    Transform::from_translation(Vec3::Z * 2.),
+                    TextColor(Color::BLACK),
+                    Text2d::new("webs"),
+                    TextFont {
+                        font: handles.font.clone(),
+                        font_size: 30.0,
+                        ..default()
+                    },
+                    UiLevelTracker {
+                        last_amount: None,
+                        amount: None
+                    }
+                ),
+                (
+                    Transform::from_translation(Vec3::Z).with_scale(Vec3::splat(0.4)),
+                    Sprite::from_atlas_image(
+                        handles.icons_image.clone(),
+                        TextureAtlas {
+                            layout: handles.icons_layout.clone(),
+                            index: 4,
+                        },
+                    ),
+                ),
+            ],
+        ),
+    ],)
+}
+
+#[derive(Component)]
+struct UiLevelTracker {
+    last_amount: Option<i32>,
+    amount: Option<i32>,
+}
+
+fn ui_level_trackers(
+    mut trackers_query: Query<(Entity, &mut UiLevelTracker, &mut Text2d, &GlobalTransform)>,
+    unit_query: Query<&Unit>,
+    child_of_query: Query<&ChildOf>,
+    mut commands: Commands,
+    handles: Res<JamAssets>,
+) {
+    let mut rng = ChaCha8Rng::from_rng(thread_rng()).unwrap();
+
+    for (tracker_entity, mut ui_tracker, mut text, gtr) in &mut trackers_query {
+        if let Some(unit) = child_of_query
+            .iter_ancestors(tracker_entity)
+            .find_map(|e| unit_query.get(e).ok())
+        {
+            ui_tracker.last_amount = ui_tracker.amount;
+            ui_tracker.amount = Some(unit.level);
+
+            text.0 = format!("{}", unit.level);
+
+            // spawn the level particle
+            if let (Some(amt), Some(last)) = (ui_tracker.amount, ui_tracker.last_amount) {
+                if amt != last {
+                    for _ in 0..(amt - last).abs() {
+                        commands.spawn((
+                            DestroyBetweenStates,
+                            Transform::from_translation(gtr.translation() + Vec3::X * 100.),
+                            Visibility::Visible,
+                            particle_level_bundle(&handles, &mut rng),
+                        ));
+                    }
+                }
+            }
+        } else {
+            panic!("despawn");
+        }
+    }
+}
+
 fn unit_value_icon_bundle(handles: &JamAssets, values: &UnitValues) -> impl Bundle {
     (children![
         (
@@ -927,11 +1088,13 @@ fn ui_ability_cost_single_bundle(
                             UnitValues::Life => "+".to_string(),
                             UnitValues::Attack => "+".to_string(),
                             UnitValues::Energy => "+".to_string(),
+                            _ => String::new(),
                         },
                         CombatNumberSource::UnitNegated(v) => match v {
                             UnitValues::Life => "-".to_string(),
                             UnitValues::Attack => "-".to_string(),
                             UnitValues::Energy => "-".to_string(),
+                            _ => String::new(),
                         },
                     }
                 )),
@@ -973,7 +1136,10 @@ fn ui_ability_cost_bundle(handles: &JamAssets, ability: CombatAbility) -> impl B
         Children::spawn(SpawnWith(move |parent: &mut ChildSpawner| {
             let captured_handles = moved_handles;
             for (i, cost) in ability.costs.iter().enumerate() {
-                parent.spawn(ui_ability_cost_single_bundle(&captured_handles, &cost, i));
+                parent.spawn((
+                    DestroyBetweenStates,
+                    ui_ability_cost_single_bundle(&captured_handles, &cost, i),
+                ));
             }
         })),
     )
@@ -1028,7 +1194,10 @@ fn ui_ability_trackers(
             {
                 if let Some(ability) = unit.abilities.get(ui_tracker.index) {
                     let e = commands
-                        .spawn(ui_filled_ability_bundle(&handles, ability.clone()))
+                        .spawn((
+                            DestroyBetweenStates,
+                            ui_filled_ability_bundle(&handles, ability.clone()),
+                        ))
                         .id();
                     commands.entity(tracker_entity).add_child(e);
                     ui_tracker.ability = Some(ability.clone());
@@ -1096,6 +1265,7 @@ fn ui_value_trackers(
                     let sign = (amt - last).signum();
                     for _ in 0..(amt - last).abs() {
                         commands.spawn((
+                            DestroyBetweenStates,
                             Transform::from_translation(gtr.translation())
                                 .with_scale(Vec3::splat(0.2)),
                             Visibility::Visible,
@@ -1115,6 +1285,41 @@ struct Particle {
     velocity: Vec3,
     drag: f32,
     lifetime: Timer,
+}
+
+fn particle_level_bundle(handles: &JamAssets, rng: &mut ChaCha8Rng) -> impl Bundle {
+    (
+        Particle {
+            velocity: Vec3::new(0., 100., 0.),
+            drag: 0.99,
+            lifetime: Timer::new(Duration::from_millis(1000), TimerMode::Once),
+        },
+        children![
+            (
+                Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(-100., 0., 0.1)),
+                Sprite::from_atlas_image(
+                    handles.icons_image.clone(),
+                    TextureAtlas {
+                        layout: handles.icons_layout.clone(),
+                        index: 3,
+                    },
+                ),
+            ),
+            (
+                Transform::from_scale(Vec3::splat(0.4)),
+                Sprite::from_image(handles.ability_background_image.clone()),
+            ),
+            (
+                TextColor(Color::BLACK),
+                Text2d::new("level up!"),
+                TextFont {
+                    font: handles.font.clone(),
+                    font_size: 25.,
+                    ..default()
+                },
+            )
+        ],
+    )
 }
 
 fn particle_value_bundle(
@@ -1144,18 +1349,40 @@ fn particle_value_bundle(
 }
 
 fn update_particles(
-    mut particles_query: Query<(Entity, &mut Particle, &mut Transform, &mut Sprite)>,
+    mut particles_query: Query<(Entity, &mut Particle, &mut Transform, Option<&mut Sprite>)>,
     mut commands: Commands,
     time: Res<Time>,
+    handles: Res<JamAssets>,
 ) {
-    for (entity, mut particle, mut tr, mut sprite) in &mut particles_query {
+    for (entity, mut particle, mut tr, sprite) in &mut particles_query {
         particle.lifetime.tick(time.delta());
         if particle.lifetime.finished() {
             commands.entity(entity).despawn();
+
+            // level up fest
+            if let None = sprite {
+                let mut rng = ChaCha8Rng::from_rng(thread_rng()).unwrap();
+                for _ in 0..20 {
+                    let pos = Vec3::new(
+                        rng.gen_range(-100.0..100.0),
+                        rng.gen_range(-50.0..50.0),
+                        0.0,
+                    );
+                    commands.spawn((
+                        DestroyBetweenStates,
+                        Transform::from_translation(tr.translation + pos)
+                            .with_scale(Vec3::splat(0.2)),
+                        Visibility::Visible,
+                        particle_value_bundle(&handles, &UnitValues::Level, &mut rng, 1),
+                    ));
+                }
+            }
             continue;
         }
 
-        sprite.color.set_alpha(1. - particle.lifetime.fraction());
+        if let Some(mut sprite) = sprite {
+            sprite.color.set_alpha(1. - particle.lifetime.fraction());
+        }
 
         tr.translation += particle.velocity * time.delta_secs();
 
@@ -1200,6 +1427,16 @@ pub fn unit_bundle(handles: &JamAssets, index: usize, unit: Unit) -> impl Bundle
             (
                 Transform::from_translation(Vec3::new(50., -100., 1.)),
                 unit_value_icon_bundle(&handles, &UnitValues::Energy),
+                Visibility::Visible,
+            ),
+            (
+                Transform::from_translation(Vec3::new(-100., 75., 1.)),
+                unit_level_icon_bundle(&handles),
+                Visibility::Visible,
+            ),
+            (
+                Transform::from_translation(Vec3::new(0., 62., 1.)),
+                unit_experience_bundle(&handles),
                 Visibility::Visible,
             ),
             (
@@ -1255,6 +1492,26 @@ pub fn unit_bundle(handles: &JamAssets, index: usize, unit: Unit) -> impl Bundle
                     )
                 ]
             ),
+            (
+                Transform::from_translation(Vec3::new(0., 80., 2.)),
+                Visibility::Visible,
+                children![
+                    (
+                        Transform::from_scale(Vec3::splat(0.5)),
+                        Sprite::from_image(handles.unit_name_image.clone()),
+                    ),
+                    (
+                        UiNameTracker,
+                        TextColor(Color::BLACK),
+                        Text2d::new(""),
+                        TextFont {
+                            font: handles.font.clone(),
+                            font_size: 30.,
+                            ..default()
+                        },
+                    )
+                ]
+            ),
         ],
         Visibility::Visible,
         unit,
@@ -1268,6 +1525,7 @@ struct ComboTextFx;
 
 fn setup_combo_animation(mut commands: Commands, handles: Res<JamAssets>) {
     commands.spawn((
+        DestroyBetweenStates,
         Transform::default(),
         Visibility::Visible,
         ComboFx,
@@ -1329,7 +1587,6 @@ fn stack_animation(
                 .iter()
                 .find(|(u, _, _)| u == &activated_ability.source)
             else {
-                eprintln!("no source");
                 continue;
             };
 
@@ -1338,7 +1595,6 @@ fn stack_animation(
                 let Some((target_entity, target, target_tr)) =
                     units_query.iter().find(|(u, _, _)| u == target)
                 else {
-                    eprintln!("no target");
                     continue;
                 };
 
@@ -1357,12 +1613,21 @@ fn stack_animation(
                 }
 
                 let points = [[src, t1, t2, dst]];
+
+                let segments_len = points[0]
+                    .windows(2)
+                    .map(|v| v[0].distance(v[1]))
+                    .sum::<f32>();
+
+                let segments_num = (segments_len / 45.) as usize;
+
                 let bezier = CubicBezier::new(points).to_curve().unwrap();
-                let positions: Vec<_> = bezier.iter_positions(10).collect();
-                let velocities: Vec<_> = bezier.iter_velocities(10).collect();
+                let positions: Vec<_> = bezier.iter_positions(segments_num).collect();
+                let velocities: Vec<_> = bezier.iter_velocities(segments_num).collect();
 
                 let fx = commands
                     .spawn((
+                        DestroyBetweenStates,
                         Transform::default(),
                         Visibility::Visible,
                         ActivatedAbilityFx {
@@ -1376,6 +1641,7 @@ fn stack_animation(
                 for (i, gain) in activated_ability.gains.iter().enumerate() {
                     let sg = commands
                         .spawn((
+                            DestroyBetweenStates,
                             Transform::from_translation(
                                 thirds[2].extend(30.3 + h as f32)
                                     + Vec3::new(30. * i as f32, 0., 0.),
@@ -1445,20 +1711,21 @@ fn stack_animation(
                     commands.entity(fx).add_child(sg);
                 }
 
-                for i in 0..10 {
+                for i in 0..positions.len() {
                     let pos = positions[i];
                     let vel = velocities[i];
                     let angle = Vec2::X.angle_to(vel);
                     let rot = Quat::from_rotation_z(angle);
                     let sprite_image = if i == 0 {
                         handles.arrow_start_image.clone()
-                    } else if i == 9 {
+                    } else if i == positions.len() - 1 {
                         handles.arrow_head_image.clone()
                     } else {
                         handles.arrow_segment_image.clone()
                     };
                     let sg = commands
                         .spawn((
+                            DestroyBetweenStates,
                             Transform::from_translation(pos.extend(30. + h as f32))
                                 .with_rotation(rot),
                             Visibility::Visible,
@@ -1495,14 +1762,79 @@ fn stack_animation(
 }
 
 #[derive(Component)]
+struct ButtonColorTarget;
+
+fn on_over_color(
+    trigger: Trigger<Pointer<Over>>,
+    mut query: Query<&mut Sprite, With<ButtonColorTarget>>,
+    children_query: Query<&Children>,
+) {
+    for child in children_query.iter_descendants(trigger.target()) {
+        if let Ok(mut sprite) = query.get_mut(child) {
+            sprite.color = Color::srgb(0.5, 0.5, 0.5);
+        }
+    }
+}
+fn on_out_color(
+    trigger: Trigger<Pointer<Out>>,
+    mut query: Query<&mut Sprite, With<ButtonColorTarget>>,
+    children_query: Query<&Children>,
+) {
+    for child in children_query.iter_descendants(trigger.target()) {
+        if let Ok(mut sprite) = query.get_mut(child) {
+            sprite.color = Color::WHITE;
+        }
+    }
+}
+
+fn on_click_goto_map(
+    trigger: Trigger<Pointer<Click>>,
+    mut next_game_state: ResMut<NextState<GameStates>>,
+) {
+    next_game_state.set(GameStates::Map);
+}
+
+fn spawn_units(
+    mut commands: Commands,
+    handles: Res<JamAssets>,
+    map: Res<MapState>,
+    party: Res<PartyState>,
+) {
+    for (i, unit) in map.combat_enemies.iter().enumerate() {
+        let len = map.combat_enemies.len();
+        let shift = i as f32 - len as f32 * 0.5 + 0.5;
+        let pos = Vec3::new(shift as f32 * 150., 250., 0.);
+        commands.spawn((
+            DestroyBetweenStates,
+            Transform::from_translation(pos).with_scale(Vec3::splat(0.6)),
+            unit_bundle(&handles, unit.sprite_index, unit.clone()),
+        ));
+    }
+
+    for (i, unit) in party.units.iter().enumerate() {
+        let len = party.units.len();
+        let shift = i as f32 - len as f32 * 0.5 + 0.5;
+        let pos = Vec3::new(shift as f32 * 150., -100., 10.);
+        commands.spawn((
+            DestroyBetweenStates,
+            SeqUnitMarker(i),
+            Transform::from_translation(pos).with_scale(Vec3::splat(0.6)),
+            unit_bundle(&handles, unit.sprite_index, unit.clone()),
+        ));
+    }
+}
+
+#[derive(Component)]
 struct EndFx;
 
 fn detect_end(
-    state: Res<CombatState>,
+    mut state: ResMut<CombatState>,
     mut commands: Commands,
     handles: Res<JamAssets>,
     units_query: Query<(Entity, &Unit)>,
     fx_query: Query<&EndFx>,
+    mut party: ResMut<PartyState>,
+    mut map_state: ResMut<MapState>,
 ) {
     if !fx_query.is_empty() {
         return;
@@ -1521,13 +1853,35 @@ fn detect_end(
     let draw = state.turn_number > 100;
     if win || lose || draw {
         commands.spawn((
-            Transform::default().with_translation(Vec3::new(0., 0., 300.)),
+            DestroyBetweenStates,
+            Transform::default()
+                .with_translation(Vec3::new(
+                    0.,
+                    if win {
+                        180.
+                    } else if lose {
+                        -180.
+                    } else {
+                        0.
+                    },
+                    300.,
+                ))
+                .with_scale(Vec3::splat(0.8)),
             Visibility::Visible,
             EndFx,
             children![
                 (
                     Transform::default(),
-                    Sprite::from_image(handles.combat_end_back_image.clone()),
+                    Sprite {
+                        color: if win {
+                            Color::srgb(0.1, 0.6, 0.0)
+                        } else if lose {
+                            Color::srgb(1.0, 0.1, 0.0)
+                        } else {
+                            Color::WHITE
+                        },
+                        ..Sprite::from_image(handles.combat_end_back_image.clone())
+                    }
                 ),
                 (
                     Transform::default().with_translation(Vec3::new(0., 0., 1.)),
@@ -1537,63 +1891,310 @@ fn detect_end(
                         _ => handles.combat_draw_image.clone(),
                     }),
                 ),
+            ],
+        ));
+        commands
+            .spawn((
+                DestroyBetweenStates,
+                EndFx,
+                Transform::default().with_translation(Vec3::new(
+                    0.,
+                    if win {
+                        120.
+                    } else if lose {
+                        -60.
+                    } else {
+                        -40.
+                    },
+                    302.,
+                )),
+                Sprite::from_color(Color::WHITE.with_alpha(0.0), Vec2::new(180., 50.)),
+                Pickable::default(),
+                children![
+                    (
+                        Transform::from_scale(Vec3::splat(0.4)),
+                        Sprite::from_image(handles.ability_background_image.clone()),
+                        ButtonColorTarget,
+                    ),
+                    (
+                        TextColor(Color::BLACK),
+                        Text2d::new("onwards"),
+                        TextFont {
+                            font: handles.font.clone(),
+                            font_size: 24.,
+                            ..default()
+                        },
+                    )
+                ],
+            ))
+            .observe(on_over_color)
+            .observe(on_out_color)
+            .observe(on_click_goto_map);
+
+        if win {
+            let mut rng = ChaCha8Rng::from_rng(thread_rng()).unwrap();
+
+            // units gain exp
+            // enemy level total and player level total are used as additional bonus
+            let enemy_levels = map_state
+                .combat_enemies
+                .iter()
+                .map(|u| u.level)
+                .sum::<i32>();
+            let player_levels = party.units.iter().map(|u| u.level).sum::<i32>();
+            let underdog_bonus = (enemy_levels - player_levels).max(0);
+            let outnumbered_bonus =
+                (map_state.combat_enemies.len() as i32 - party.units.len() as i32).max(0) * 2;
+            let experience_gained = 2 + underdog_bonus + outnumbered_bonus;
+
+            let mut gains = vec![];
+
+            for unit in party.units.iter_mut() {
+                unit.experience += experience_gained;
+
+                let mut unit_gains = vec![];
+
+                let exp = (
+                    unit.experience.min(unit.max_experience),
+                    unit.max_experience,
+                );
+                unit_gains.push((vec![], exp));
+
+                for _ in 0..100 {
+                    if unit.experience >= unit.max_experience {
+                        unit.experience -= unit.max_experience;
+                        unit.level += 1;
+
+                        // max experience scales quadratically
+                        unit.max_experience = 11 + (unit.level + 3).pow(2) / 10;
+
+                        let mut level_gains = vec![];
+
+                        let gains = level_up(&mut rng);
+                        for gain in gains {
+                            unit.value_mut(&gain.values).base = gain.source.solve(unit);
+                            level_gains.push(gain);
+                        }
+
+                        let exp = (
+                            unit.experience.min(unit.max_experience),
+                            unit.max_experience,
+                        );
+                        unit_gains.push((level_gains, exp));
+                    }
+                }
+
+                gains.push(unit_gains);
+            }
+
+            let gold_gained = 5 + enemy_levels;
+            party.gold += gold_gained;
+
+            // end combat animation sequence
+
+            for (e, unit) in &units_query {
+                if unit.owner == Owner::Enemy {
+                    commands.entity(e).despawn();
+                }
+            }
+            commands.spawn((
+                DestroyBetweenStates,
+                EndCombatSequence {
+                    experience_shown: false,
+                    experience_gained,
+                    gold_shown: false,
+                    gold_gained,
+                    heal_everybody: false,
+                    gains,
+                    current_unit_shown: 0,
+                    current_gain_shown: 0,
+                    timer: Timer::default(),
+                },
+            ));
+        }
+
+        map_state.combat_enemies.clear();
+    }
+}
+
+#[derive(Component)]
+struct SeqUnitMarker(usize);
+
+#[derive(Component)]
+struct EndCombatSequence {
+    gold_shown: bool,
+    gold_gained: i32,
+    //
+    experience_shown: bool,
+    experience_gained: i32,
+    //
+    heal_everybody: bool,
+    //
+    // per unit, per level, (list of gains, current exp/max exp)
+    gains: Vec<Vec<(Vec<CombatNumber>, (i32, i32))>>,
+    current_unit_shown: usize,
+    current_gain_shown: usize,
+    // done
+    timer: Timer,
+}
+
+fn end_combat_sequence(
+    mut query: Query<&mut EndCombatSequence>,
+    mut units_query: Query<(Entity, &mut Unit)>,
+    seq_unit_marker_query: Query<(Entity, &SeqUnitMarker)>,
+    mut commands: Commands,
+    handles: Res<JamAssets>,
+    map: Res<MapState>,
+    party: Res<PartyState>,
+    time: Res<Time>,
+) {
+    let Ok(mut seq) = query.single_mut() else {
+        return;
+    };
+
+    seq.timer.tick(time.delta());
+    if !seq.timer.finished() {
+        return;
+    }
+
+    if !seq.gold_shown {
+        seq.gold_shown = true;
+        commands.spawn((
+            DestroyBetweenStates,
+            Transform::from_translation(Vec3::new(-150., 50., 0.)),
+            Visibility::Visible,
+            children![
                 (
-                    Transform::default().with_translation(Vec3::new(0., -100., 2.)),
-                    Visibility::Visible,
-                    children![
-                        (
-                            Transform::from_scale(Vec3::splat(0.4)),
-                            Sprite::from_image(handles.ability_background_image.clone()),
-                        ),
-                        (
-                            TextColor(Color::BLACK),
-                            Text2d::new("Back to map"),
-                            TextFont {
-                                font: handles.font.clone(),
-                                font_size: 24.,
-                                ..default()
-                            },
-                        )
-                    ]
+                    Transform::from_scale(Vec3::splat(0.5)),
+                    Sprite::from_image(handles.ability_background_image.clone()),
+                ),
+                (
+                    TextColor(Color::BLACK),
+                    Text2d::new(format!("+{} gold", seq.gold_gained)),
+                    TextFont {
+                        font: handles.font.clone(),
+                        font_size: 30.,
+                        ..default()
+                    },
+                ),
+                (
+                    Transform::from_scale(Vec3::splat(0.8))
+                        .with_translation(Vec3::Z * 0.1 + Vec3::X * 120.),
+                    Sprite::from_atlas_image(
+                        handles.icons_image.clone(),
+                        TextureAtlas {
+                            layout: handles.icons_layout.clone(),
+                            index: 6,
+                        },
+                    )
                 ),
             ],
         ));
+
+        seq.timer = Timer::from_seconds(0.3, TimerMode::Once);
+        return;
     }
-}
 
-fn spawn_units(mut commands: Commands, handles: Res<JamAssets>) {
-    let mut rng = ChaCha8Rng::from_rng(thread_rng()).unwrap();
-
-    let blueprints = Blueprints::construct();
-
-    for i in 0..5 {
-        let unit = blueprints.units[rng.gen_range(0..blueprints.units.len())].clone();
+    if !seq.experience_shown {
+        seq.experience_shown = true;
         commands.spawn((
-            Transform::from_translation(Vec3::new(300. - i as f32 * 150., 250., 0.))
-                .with_scale(Vec3::splat(0.6)),
-            unit_bundle(
-                &handles,
-                unit.sprite_index,
-                Unit {
-                    owner: Owner::Enemy,
-                    ..unit
-                },
-            ),
+            DestroyBetweenStates,
+            Transform::from_translation(Vec3::new(150., 50., 0.)),
+            Visibility::Visible,
+            children![
+                (
+                    Transform::from_scale(Vec3::splat(0.5)),
+                    Sprite::from_image(handles.ability_background_image.clone()),
+                ),
+                (
+                    TextColor(Color::BLACK),
+                    Text2d::new(format!("+{} exp", seq.experience_gained)),
+                    TextFont {
+                        font: handles.font.clone(),
+                        font_size: 30.,
+                        ..default()
+                    },
+                ),
+                (
+                    Transform::from_scale(Vec3::splat(0.8))
+                        .with_translation(Vec3::Z * 0.1 - Vec3::X * 110.),
+                    Sprite::from_atlas_image(
+                        handles.icons_image.clone(),
+                        TextureAtlas {
+                            layout: handles.icons_layout.clone(),
+                            index: 3,
+                        },
+                    )
+                ),
+            ],
         ));
 
-        let unit = blueprints.units[rng.gen_range(0..blueprints.units.len())].clone();
-        commands.spawn((
-            Transform::from_translation(Vec3::new(300. - i as f32 * 150., -100., 0.))
-                .with_scale(Vec3::splat(0.6)),
-            unit_bundle(
-                &handles,
-                unit.sprite_index,
-                Unit {
-                    owner: Owner::Player,
-                    ..unit
-                },
-            ),
-        ));
+        seq.timer = Timer::from_seconds(0.8, TimerMode::Once);
+        return;
+    }
+
+    if !seq.heal_everybody {
+        seq.heal_everybody = true;
+        for (i, unit) in party.start_of_combat_units.iter().enumerate() {
+            if let Some((e, _)) = seq_unit_marker_query.iter().find(|(_, m)| m.0 == i) {
+                /*
+                if let Ok((_, mut existing_unit)) = units_query.get_mut(e) {
+                    *existing_unit = unit.clone();
+                }
+                */
+            } else {
+                let len = party.start_of_combat_units.len();
+                let shift = i as f32 - len as f32 * 0.5 + 0.5;
+                let pos = Vec3::new(shift as f32 * 150., -100., 10.);
+                commands.spawn((
+                    DestroyBetweenStates,
+                    SeqUnitMarker(i),
+                    Transform::from_translation(pos).with_scale(Vec3::splat(0.6)),
+                    unit_bundle(&handles, unit.sprite_index, unit.clone()),
+                ));
+            }
+        }
+
+        seq.timer = Timer::from_seconds(0.2, TimerMode::Once);
+        return;
+    }
+
+    if let Some(_) = seq.gains.get(seq.current_unit_shown) {
+        if let Some((gains, (exp, max_exp))) = seq.gains[seq.current_unit_shown]
+            .get(seq.current_gain_shown)
+            .cloned()
+        {
+            if let Some((unit_entity, _)) = seq_unit_marker_query
+                .iter()
+                .find(|(_, m)| m.0 == seq.current_unit_shown)
+            {
+                if let Ok((_, mut unit)) = units_query.get_mut(unit_entity) {
+                    seq.current_gain_shown += 1;
+
+                    if !gains.is_empty() {
+                        unit.level += 1;
+                    }
+
+                    for gain in gains {
+                        let current = unit.value(&gain.values).current;
+                        unit.value_mut(&gain.values).current =
+                            (current + gain.source.solve(&unit)).max(0);
+                    }
+
+                    unit.experience = exp;
+                    unit.max_experience = max_exp;
+                } else {
+                    println!("huh")
+                }
+            } else {
+                seq.current_gain_shown += 1;
+            }
+        } else {
+            seq.current_gain_shown = 0;
+            seq.current_unit_shown += 1;
+        }
+
+        seq.timer = Timer::from_seconds(0.4, TimerMode::Once);
+        return;
     }
 }
-

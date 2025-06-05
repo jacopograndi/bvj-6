@@ -43,25 +43,25 @@ fn main() {
 
     app.insert_resource(ClearColor(Color::srgb(0.1, 0.1, 0.1)));
 
-    app.init_state::<AppStates>();
-
-    app.add_plugins((CombatPlugin, MapPlugin));
+    app.init_state::<GameStates>();
 
     app.add_loading_state(
-        LoadingState::new(AppStates::AssetLoading)
-            .continue_to_state(AppStates::Map)
+        LoadingState::new(GameStates::AssetLoading)
+            .continue_to_state(GameStates::Map)
             .load_collection::<JamAssets>(),
     );
-    app.add_systems(OnExit(AppStates::AssetLoading), prepare_atlases);
-    app.add_systems(OnExit(AppStates::AssetLoading), spawn_camera);
-    app.add_systems(OnExit(AppStates::Map), destroy_everything);
-    app.add_systems(OnExit(AppStates::Combat), destroy_everything);
+    app.add_systems(OnExit(GameStates::AssetLoading), prepare_atlases);
+    app.add_systems(OnExit(GameStates::AssetLoading), spawn_camera);
+    app.add_systems(OnExit(GameStates::Map), destroy_everything);
+    app.add_systems(OnExit(GameStates::Combat), destroy_everything);
 
     app.add_systems(Update, debug_resolution);
 
     let bp = Blueprints::construct();
     app.insert_resource(PartyState::construct(&bp));
     app.insert_resource(bp);
+
+    app.add_plugins((CombatPlugin, MapPlugin));
 
     app.run();
 }
@@ -83,6 +83,9 @@ struct JamAssets {
     #[asset(path = "images/icons.png")]
     icons_image: Handle<Image>,
     icons_layout: Handle<TextureAtlasLayout>,
+
+    #[asset(path = "images/exp_bar.png")]
+    exp_bar_image: Handle<Image>,
 
     #[asset(path = "images/ability_background.png")]
     ability_background_image: Handle<Image>,
@@ -134,7 +137,7 @@ struct JamAssets {
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]
-enum AppStates {
+pub enum GameStates {
     #[default]
     AssetLoading,
     Combat,
@@ -171,9 +174,9 @@ fn prepare_atlases(
 }
 
 #[derive(Component)]
-struct KeepBetweenStates;
+struct DestroyBetweenStates;
 
-fn destroy_everything(mut commands: Commands, query: Query<Entity, Without<KeepBetweenStates>>) {
+fn destroy_everything(mut commands: Commands, query: Query<Entity, With<DestroyBetweenStates>>) {
     for entity in &query {
         commands.entity(entity).despawn();
     }
@@ -181,7 +184,6 @@ fn destroy_everything(mut commands: Commands, query: Query<Entity, Without<KeepB
 
 fn spawn_camera(mut commands: Commands) {
     commands.spawn((
-        KeepBetweenStates,
         Camera2d,
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::FixedVertical {
@@ -193,8 +195,10 @@ fn spawn_camera(mut commands: Commands) {
 }
 
 #[derive(Resource)]
-struct PartyState {
-    units: Vec<Unit>,
+pub struct PartyState {
+    pub units: Vec<Unit>,
+    pub start_of_combat_units: Vec<Unit>,
+    pub gold: i32,
 }
 
 impl PartyState {
@@ -207,6 +211,10 @@ impl PartyState {
         for unit in &mut units {
             unit.owner = Owner::Player
         }
-        Self { units }
+        Self {
+            units,
+            gold: 10,
+            start_of_combat_units: vec![],
+        }
     }
 }
