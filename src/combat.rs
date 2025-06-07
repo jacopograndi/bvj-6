@@ -4,10 +4,20 @@ pub struct CombatPlugin;
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(CombatState::default());
+        app.insert_resource(AutoStepper {
+            timer: Timer::new(Duration::from_millis(500), TimerMode::Repeating),
+            slider_value: 0.,
+        });
 
         app.add_systems(
             OnEnter(GameStates::Combat),
-            (setup_combo_animation, spawn_units, reset_combat),
+            (
+                setup_combo_animation,
+                spawn_units,
+                spawn_gold,
+                reset_combat,
+                spawn_auto_step_controls,
+            ),
         );
 
         app.add_systems(
@@ -29,21 +39,169 @@ impl Plugin for CombatPlugin {
                 update_combo_animation,
                 update_particles,
                 end_combat_sequence,
+                auto_step,
             )
                 .run_if(in_state(GameStates::Combat)),
         );
+    }
+}
 
-        app.add_systems(
-            Update,
+#[derive(Resource)]
+struct AutoStepper {
+    timer: Timer,
+    slider_value: f32,
+}
+
+#[derive(Component)]
+struct AutoStepperSlider {
+    min: f32,
+    max: f32,
+}
+
+fn on_slider_drag(
+    trigger: Trigger<Pointer<Drag>>,
+    mut query: Query<(&AutoStepperSlider, &mut Transform)>,
+    mut stepper: ResMut<AutoStepper>,
+) {
+    if let Ok((slider, mut tr)) = query.single_mut() {
+        stepper.slider_value =
+            (stepper.slider_value - trigger.delta.y).clamp(slider.min, slider.max);
+        tr.translation.y = stepper.slider_value;
+        let amp = slider.max - slider.min;
+        let t = (stepper.slider_value - slider.min) / amp;
+        if t < 0.1 {
+            stepper.timer.pause()
+        } else {
+            stepper.timer.unpause();
+            stepper
+                .timer
+                .set_duration(Duration::from_secs_f32(1.01 - t));
+        }
+    }
+}
+
+fn spawn_auto_step_controls(
+    mut commands: Commands,
+    handles: Res<JamAssets>,
+    stepper: Res<AutoStepper>,
+) {
+    commands.spawn((
+        DestroyBetweenStates,
+        Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(-550., 100., 200.)),
+        Visibility::Visible,
+        children![
             (
-                ui_ability_trackers,
-                ui_value_trackers,
-                ui_name_trackers,
-                ui_level_trackers,
-                ui_experience_trackers,
+                Transform::from_translation(Vec3::Z),
+                Sprite {
+                    color: Color::BLACK,
+                    ..Sprite::from_atlas_image(
+                        handles.icons_image.clone(),
+                        TextureAtlas {
+                            layout: handles.icons_layout.clone(),
+                            index: 4,
+                        },
+                    )
+                },
+            ),
+            (
+                Transform::from_translation(Vec3::Z * 2.),
+                Sprite {
+                    color: Color::WHITE,
+                    ..Sprite::from_atlas_image(
+                        handles.icons_image.clone(),
+                        TextureAtlas {
+                            layout: handles.icons_layout.clone(),
+                            index: 9,
+                        },
+                    )
+                },
             )
-                .run_if(in_state(GameStates::Combat).or(in_state(GameStates::Map))),
-        );
+        ],
+    ));
+    commands.spawn((
+        DestroyBetweenStates,
+        Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(-550., -0., 200.)),
+        Visibility::Visible,
+        children![(
+            Transform::from_translation(Vec3::ZERO),
+            Sprite {
+                color: Color::WHITE,
+                ..Sprite::from_image(handles.speed_dial_image.clone())
+            },
+        )],
+    ));
+    commands
+        .spawn((
+            DestroyBetweenStates,
+            Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(
+                -550.,
+                stepper.slider_value,
+                201.,
+            )),
+            Visibility::Visible,
+            ButtonColorTarget,
+            AutoStepperSlider {
+                min: -80.,
+                max: 80.,
+            },
+            Pickable::default(),
+            Sprite {
+                color: Color::WHITE,
+                ..Sprite::from_atlas_image(
+                    handles.icons_image.clone(),
+                    TextureAtlas {
+                        layout: handles.icons_layout.clone(),
+                        index: 10,
+                    },
+                )
+            },
+        ))
+        .observe(on_over_color)
+        .observe(on_out_color)
+        .observe(on_slider_drag);
+    commands.spawn((
+        DestroyBetweenStates,
+        Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(-550., -100., 200.)),
+        Visibility::Visible,
+        children![
+            (
+                Transform::from_translation(Vec3::Z),
+                Sprite {
+                    color: Color::BLACK,
+                    ..Sprite::from_atlas_image(
+                        handles.icons_image.clone(),
+                        TextureAtlas {
+                            layout: handles.icons_layout.clone(),
+                            index: 4,
+                        },
+                    )
+                },
+            ),
+            (
+                Transform::from_translation(Vec3::Z * 2.),
+                Sprite {
+                    color: Color::WHITE,
+                    ..Sprite::from_atlas_image(
+                        handles.icons_image.clone(),
+                        TextureAtlas {
+                            layout: handles.icons_layout.clone(),
+                            index: 8,
+                        },
+                    )
+                },
+            )
+        ],
+    ));
+}
+
+fn auto_step(
+    mut event: EventWriter<OnCombatStep>,
+    mut stepper: ResMut<AutoStepper>,
+    time: Res<Time>,
+) {
+    stepper.timer.tick(time.delta());
+    if stepper.timer.finished() {
+        event.write(OnCombatStep);
     }
 }
 
@@ -51,12 +209,43 @@ fn reset_combat(mut state: ResMut<CombatState>) {
     *state = CombatState::default();
 }
 
-fn manual_combat_step(keys: Res<ButtonInput<KeyCode>>, mut event: EventWriter<OnCombatStep>) {
-    if keys.just_pressed(KeyCode::Space) {
-        event.write(OnCombatStep);
-    }
-    if keys.pressed(KeyCode::Enter) {
-        event.write(OnCombatStep);
+fn manual_combat_step(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut stepper: ResMut<AutoStepper>,
+    mut event: EventWriter<OnCombatStep>,
+    mut query: Query<(&AutoStepperSlider, &mut Transform)>,
+) {
+    if let Ok((slider, mut tr)) = query.single_mut() {
+        tr.translation.y = stepper.slider_value;
+        if keys.just_pressed(KeyCode::Space) {
+            stepper.slider_value = -80.;
+            let amp = slider.max - slider.min;
+            let t = (stepper.slider_value - slider.min) / amp;
+            if t < 0.1 {
+                stepper.timer.pause()
+            } else {
+                stepper.timer.unpause();
+                stepper
+                    .timer
+                    .set_duration(Duration::from_secs_f32(1.01 - t));
+            }
+        }
+        if keys.pressed(KeyCode::Enter) {
+            stepper.slider_value = 80.;
+            let amp = slider.max - slider.min;
+            let t = (stepper.slider_value - slider.min) / amp;
+            if t < 0.1 {
+                stepper.timer.pause()
+            } else {
+                stepper.timer.unpause();
+                stepper
+                    .timer
+                    .set_duration(Duration::from_secs_f32(1.01 - t));
+            }
+        }
+        if keys.just_pressed(KeyCode::Backspace) {
+            event.write(OnCombatStep);
+        }
     }
 }
 
@@ -97,7 +286,6 @@ impl Unit {
             UnitValues::Life => self.life.clone(),
             UnitValues::Attack => self.attack.clone(),
             UnitValues::Energy => self.energy.clone(),
-            _ => unreachable!(), // risky
         }
     }
 
@@ -106,7 +294,6 @@ impl Unit {
             UnitValues::Life => &mut self.life,
             UnitValues::Attack => &mut self.attack,
             UnitValues::Energy => &mut self.energy,
-            _ => unreachable!(), // risky
         }
     }
 }
@@ -130,7 +317,6 @@ pub enum UnitValues {
     Life,
     Attack,
     Energy,
-    Level,
 }
 
 impl UnitValues {
@@ -139,7 +325,6 @@ impl UnitValues {
             UnitValues::Life => 0,
             UnitValues::Attack => 1,
             UnitValues::Energy => 2,
-            UnitValues::Level => 3,
         }
     }
     pub fn describe(&self) -> String {
@@ -147,7 +332,6 @@ impl UnitValues {
             UnitValues::Life => format!("life"),
             UnitValues::Attack => format!("attack"),
             UnitValues::Energy => format!("energy"),
-            _ => format!(""),
         }
     }
 }
@@ -170,8 +354,8 @@ pub enum CombatTarget {
 }
 
 impl CombatTarget {
-    pub fn describe(&self) -> String {
-        match self {
+    pub fn describe(&self, is_trigger: bool) -> String {
+        let mut s = match self {
             CombatTarget::All => format!("any"),
             CombatTarget::This => format!("this"),
             CombatTarget::AllOther => format!("any other"),
@@ -185,7 +369,11 @@ impl CombatTarget {
             CombatTarget::AbilitySource => format!("the targeter"),
             CombatTarget::AbilityTarget => format!("the target"),
             CombatTarget::Specific(_) => format!("that unit"),
+        };
+        if !is_trigger {
+            s = s.replace("any", "all");
         }
+        s
     }
 
     pub fn get(
@@ -328,7 +516,7 @@ pub struct CombatEffect {
 
 impl CombatEffect {
     pub fn describe(&self) -> String {
-        let mut s = format!("{} ", self.target.describe());
+        let mut s = format!("{} ", self.target.describe(false));
         for (i, gain) in self.gains.iter().enumerate() {
             let comma = if i < self.gains.len() - 1 { ", " } else { "" };
             s = format!("{}{}{}", s, gain.describe(), comma);
@@ -378,7 +566,11 @@ pub struct CombatTrigger {
 
 impl CombatTrigger {
     pub fn describe(&self) -> String {
-        format!("when {} {}", self.target.describe(), self.watch.describe())
+        format!(
+            "when {} {}",
+            self.target.describe(true),
+            self.watch.describe()
+        )
     }
 }
 
@@ -399,6 +591,9 @@ impl CombatAbility {
         for (i, effect) in self.effects.iter().enumerate() {
             let comma = if i < self.effects.len() - 1 { ", " } else { "" };
             s = format!("{}{}{}", s, effect.describe(), comma);
+        }
+        if !s.is_empty() {
+            s = s.remove(0).to_uppercase().to_string() + &s;
         }
         s
     }
@@ -856,9 +1051,9 @@ fn activate_next_response(
 }
 
 #[derive(Component)]
-struct UiExperienceTracker;
+pub struct UiExperienceTracker;
 
-fn ui_experience_trackers(
+pub fn ui_experience_trackers(
     mut trackers_query: Query<(Entity, &UiExperienceTracker, &mut Transform)>,
     unit_query: Query<&Unit>,
     child_of_query: Query<&ChildOf>,
@@ -947,12 +1142,12 @@ fn unit_level_icon_bundle(handles: &JamAssets) -> impl Bundle {
 }
 
 #[derive(Component)]
-struct UiLevelTracker {
+pub struct UiLevelTracker {
     last_amount: Option<i32>,
     amount: Option<i32>,
 }
 
-fn ui_level_trackers(
+pub fn ui_level_trackers(
     mut trackers_query: Query<(Entity, &mut UiLevelTracker, &mut Text2d, &GlobalTransform)>,
     unit_query: Query<&Unit>,
     child_of_query: Query<&ChildOf>,
@@ -1063,7 +1258,7 @@ fn unit_value_icon_bundle(handles: &JamAssets, values: &UnitValues) -> impl Bund
 }
 
 #[derive(Component, Debug, Clone, Default)]
-struct UiAbilityTracker {
+pub struct UiAbilityTracker {
     ability: Option<CombatAbility>,
     index: usize,
 }
@@ -1179,7 +1374,7 @@ fn ui_ability_bundle(handles: &JamAssets, index: usize) -> impl Bundle {
     },)
 }
 
-fn ui_ability_trackers(
+pub fn ui_ability_trackers(
     mut commands: Commands,
     mut trackers_query: Query<(Entity, &mut UiAbilityTracker)>,
     unit_query: Query<&Unit>,
@@ -1210,7 +1405,7 @@ fn ui_ability_trackers(
 }
 
 #[derive(Component, Debug, Clone)]
-struct UiValueTracker {
+pub struct UiValueTracker {
     values: UnitValues,
     amount: Option<i32>,
     last_amount: Option<i32>,
@@ -1235,7 +1430,7 @@ impl UiValueTracker {
     }
 }
 
-fn ui_value_trackers(
+pub fn ui_value_trackers(
     mut trackers_query: Query<(Entity, &mut UiValueTracker, &mut Text2d, &GlobalTransform)>,
     unit_query: Query<&Unit>,
     child_of_query: Query<&ChildOf>,
@@ -1269,7 +1464,12 @@ fn ui_value_trackers(
                             Transform::from_translation(gtr.translation())
                                 .with_scale(Vec3::splat(0.2)),
                             Visibility::Visible,
-                            particle_value_bundle(&handles, &ui_tracker.values, &mut rng, sign),
+                            particle_value_bundle(
+                                &handles,
+                                &mut rng,
+                                sign,
+                                ui_tracker.values.sprite_index(),
+                            ),
                         ));
                     }
                 }
@@ -1281,13 +1481,13 @@ fn ui_value_trackers(
 }
 
 #[derive(Component, Debug, Clone)]
-struct Particle {
-    velocity: Vec3,
-    drag: f32,
-    lifetime: Timer,
+pub struct Particle {
+    pub velocity: Vec3,
+    pub drag: f32,
+    pub lifetime: Timer,
 }
 
-fn particle_level_bundle(handles: &JamAssets, rng: &mut ChaCha8Rng) -> impl Bundle {
+pub fn particle_level_bundle(handles: &JamAssets, rng: &mut ChaCha8Rng) -> impl Bundle {
     (
         Particle {
             velocity: Vec3::new(0., 100., 0.),
@@ -1322,11 +1522,11 @@ fn particle_level_bundle(handles: &JamAssets, rng: &mut ChaCha8Rng) -> impl Bund
     )
 }
 
-fn particle_value_bundle(
+pub fn particle_value_bundle(
     handles: &JamAssets,
-    values: &UnitValues,
     rng: &mut ChaCha8Rng,
     sign: i32,
+    index: usize,
 ) -> impl Bundle {
     (
         Particle {
@@ -1342,13 +1542,13 @@ fn particle_value_bundle(
             handles.icons_image.clone(),
             TextureAtlas {
                 layout: handles.icons_layout.clone(),
-                index: values.sprite_index(),
+                index,
             },
         ),
     )
 }
 
-fn update_particles(
+pub fn update_particles(
     mut particles_query: Query<(Entity, &mut Particle, &mut Transform, Option<&mut Sprite>)>,
     mut commands: Commands,
     time: Res<Time>,
@@ -1373,7 +1573,7 @@ fn update_particles(
                         Transform::from_translation(tr.translation + pos)
                             .with_scale(Vec3::splat(0.2)),
                         Visibility::Visible,
-                        particle_value_bundle(&handles, &UnitValues::Level, &mut rng, 1),
+                        particle_value_bundle(&handles, &mut rng, 1, 3),
                     ));
                 }
             }
@@ -1392,9 +1592,9 @@ fn update_particles(
 }
 
 #[derive(Component, Debug, Clone)]
-struct UiNameTracker;
+pub struct UiNameTracker;
 
-fn ui_name_trackers(
+pub fn ui_name_trackers(
     mut trackers_query: Query<(Entity, &UiNameTracker, &mut Text2d)>,
     unit_query: Query<&Unit>,
     child_of_query: Query<&ChildOf>,
@@ -1762,24 +1962,32 @@ fn stack_animation(
 }
 
 #[derive(Component)]
-struct ButtonColorTarget;
+pub struct ButtonColorTarget;
 
-fn on_over_color(
+pub fn on_over_color(
     trigger: Trigger<Pointer<Over>>,
     mut query: Query<&mut Sprite, With<ButtonColorTarget>>,
     children_query: Query<&Children>,
 ) {
+    if let Ok(mut sprite) = query.get_mut(trigger.target()) {
+        sprite.color = Color::srgb(0.5, 0.5, 0.5);
+        return;
+    }
     for child in children_query.iter_descendants(trigger.target()) {
         if let Ok(mut sprite) = query.get_mut(child) {
             sprite.color = Color::srgb(0.5, 0.5, 0.5);
         }
     }
 }
-fn on_out_color(
+pub fn on_out_color(
     trigger: Trigger<Pointer<Out>>,
     mut query: Query<&mut Sprite, With<ButtonColorTarget>>,
     children_query: Query<&Children>,
 ) {
+    if let Ok(mut sprite) = query.get_mut(trigger.target()) {
+        sprite.color = Color::WHITE;
+        return;
+    }
     for child in children_query.iter_descendants(trigger.target()) {
         if let Ok(mut sprite) = query.get_mut(child) {
             sprite.color = Color::WHITE;
@@ -1931,8 +2139,14 @@ fn detect_end(
             .observe(on_out_color)
             .observe(on_click_goto_map);
 
-        if win {
+        if lose || draw {
+            map_state.player_pos = map_state.last_town;
+        } else if win {
             let mut rng = ChaCha8Rng::from_rng(thread_rng()).unwrap();
+
+            let player_pos = map_state.player_pos;
+            map_state.enemy_parties.remove(&player_pos);
+            map_state.enemy_respawn_timer.insert(player_pos, 3);
 
             // units gain exp
             // enemy level total and player level total are used as additional bonus
@@ -1965,14 +2179,14 @@ fn detect_end(
                         unit.experience -= unit.max_experience;
                         unit.level += 1;
 
-                        // max experience scales quadratically
                         unit.max_experience = 11 + (unit.level + 3).pow(2) / 10;
 
                         let mut level_gains = vec![];
 
                         let gains = level_up(&mut rng);
                         for gain in gains {
-                            unit.value_mut(&gain.values).base = gain.source.solve(unit);
+                            unit.value_mut(&gain.values).current += gain.source.solve(&unit);
+                            unit.value_mut(&gain.values).base += gain.source.solve(&unit);
                             level_gains.push(gain);
                         }
 

@@ -367,7 +367,27 @@ impl Blueprints {
         ];
 
         let units = vec![
-            // basic attack to damage
+            // basic attack
+            Unit {
+                name: format!("Brandon"),
+                sprite_index: 1,
+                level: 1,
+                experience: 0,
+                max_experience: 10,
+                life: UnitValue::full(12),
+                attack: UnitValue::full(5),
+                energy: UnitValue::full(10),
+                owner: Owner::Enemy,
+                abilities: vec![CombatAbility {
+                    effects: vec![fx(
+                        CombatTarget::EnemyWithMost(life()),
+                        vec![num(src_unit_neg(attack()), life())],
+                    )],
+                    costs: vec![num(imm(10), energy())],
+                    trigger: None,
+                }],
+            },
+            // basic attack to damage, buffs itself
             Unit {
                 name: format!("Spark"),
                 sprite_index: 0,
@@ -387,7 +407,7 @@ impl Blueprints {
                     CombatAbility {
                         effects: vec![fx(
                             CombatTarget::EnemyWithMost(life()),
-                            vec![num(imm(-2), life())],
+                            vec![num(imm(-1), life())],
                         )],
                         costs: vec![num(imm(1), attack())],
                         trigger: None,
@@ -420,7 +440,7 @@ impl Blueprints {
                 max_experience: 10,
                 life: UnitValue::full(8),
                 attack: UnitValue::full(0),
-                energy: UnitValue::full(0),
+                energy: UnitValue::full(2),
                 owner: Owner::Enemy,
                 abilities: vec![
                     CombatAbility {
@@ -496,7 +516,7 @@ impl Blueprints {
                             CombatTarget::AllyWithLeast(life()),
                             vec![num(imm(3), life())],
                         )],
-                        costs: vec![num(imm(5), energy())],
+                        costs: vec![num(imm(2), energy())],
                         trigger: None,
                     },
                 ],
@@ -524,31 +544,41 @@ impl Blueprints {
                     }),
                 }],
             },
-            // ally gainlife is scaling damage
+            // enraged, when hit buffs
             Unit {
                 name: format!("Scarlet"),
                 sprite_index: 8,
                 level: 1,
                 experience: 0,
                 max_experience: 10,
-                life: UnitValue::full(5),
-                attack: UnitValue::full(5),
+                life: UnitValue::full(24),
+                attack: UnitValue::full(1),
                 energy: UnitValue::full(8),
                 owner: Owner::Enemy,
-                abilities: vec![CombatAbility {
-                    effects: vec![
-                        fx(
-                            CombatTarget::EnemyWithMost(life()),
-                            vec![num(src_unit_neg(attack()), life())],
-                        ),
-                        fx(CombatTarget::AbilityTarget, vec![num(imm(-1), life())]),
-                    ],
-                    costs: vec![num(imm(4), energy())],
-                    trigger: Some(CombatTrigger {
-                        target: CombatTarget::AllAlly,
-                        watch: CombatTriggerWatch::ValueIncrease(life()),
-                    }),
-                }],
+                abilities: vec![
+                    CombatAbility {
+                        effects: vec![
+                            fx(
+                                CombatTarget::AllyWithMost(life()),
+                                vec![num(imm(1), attack())],
+                            ),
+                            fx(CombatTarget::This, vec![num(imm(4), attack())]),
+                        ],
+                        costs: vec![num(imm(1), energy())],
+                        trigger: Some(CombatTrigger {
+                            target: CombatTarget::This,
+                            watch: CombatTriggerWatch::ValueDecrease(life()),
+                        }),
+                    },
+                    CombatAbility {
+                        effects: vec![fx(
+                            CombatTarget::EnemyWithMost(attack()),
+                            vec![num(imm(-1), life())],
+                        )],
+                        costs: vec![num(imm(2), attack())],
+                        trigger: None,
+                    },
+                ],
             },
             // bloodletting for attack
             Unit {
@@ -564,7 +594,7 @@ impl Blueprints {
                 abilities: vec![
                     CombatAbility {
                         effects: vec![fx(CombatTarget::AllOther, vec![num(imm(1), attack())])],
-                        costs: vec![num(imm(2), life()), num(imm(6), energy())],
+                        costs: vec![num(imm(2), life()), num(imm(4), energy())],
                         trigger: None,
                     },
                     CombatAbility {
@@ -634,7 +664,182 @@ impl Blueprints {
                     },
                 ],
             },
+            // bloodletting for energy drain, ultimate
+            Unit {
+                name: format!("Abad"),
+                sprite_index: 11,
+                level: 1,
+                experience: 0,
+                max_experience: 10,
+                life: UnitValue::full(30),
+                attack: UnitValue::full(0),
+                energy: UnitValue::full(0),
+                owner: Owner::Enemy,
+                abilities: vec![
+                    CombatAbility {
+                        effects: vec![fx(
+                            CombatTarget::AbilitySource,
+                            vec![num(imm(-2), energy())],
+                        )],
+                        costs: vec![num(imm(2), life())],
+                        trigger: Some(CombatTrigger {
+                            target: CombatTarget::AllAlly,
+                            watch: CombatTriggerWatch::ValueDecrease(life()),
+                        }),
+                    },
+                    CombatAbility {
+                        effects: vec![fx(
+                            CombatTarget::EnemyWithMost(life()),
+                            vec![num(imm(-50), life())],
+                        )],
+                        costs: vec![num(imm(50), life())],
+                        trigger: None,
+                    },
+                ],
+            },
+            // attack drain
+            Unit {
+                name: format!("Sylther"),
+                sprite_index: 4,
+                level: 1,
+                experience: 0,
+                max_experience: 10,
+                life: UnitValue::full(8),
+                attack: UnitValue::full(0),
+                energy: UnitValue::full(10),
+                owner: Owner::Enemy,
+                abilities: vec![
+                    CombatAbility {
+                        effects: vec![fx(
+                            CombatTarget::EnemyWithMost(energy()),
+                            vec![num(imm(-1), energy())],
+                        )],
+                        costs: vec![num(imm(1), energy())],
+                        trigger: None,
+                    },
+                    CombatAbility {
+                        effects: vec![fx(CombatTarget::AllEnemy, vec![num(imm(-10), energy())])],
+                        costs: vec![num(imm(30), life())],
+                        trigger: Some(CombatTrigger {
+                            target: CombatTarget::This,
+                            watch: CombatTriggerWatch::ValueDecrease(life()),
+                        }),
+                    },
+                ],
+            },
+            // joker
+            Unit {
+                name: format!("Joker"),
+                sprite_index: 15,
+                level: 1,
+                experience: 0,
+                max_experience: 10,
+                life: UnitValue::full(10),
+                attack: UnitValue::full(0),
+                energy: UnitValue::full(10),
+                owner: Owner::Enemy,
+                abilities: vec![
+                    CombatAbility {
+                        effects: vec![fx(
+                            CombatTarget::AbilitySource,
+                            vec![num(imm(-1), energy())],
+                        )],
+                        costs: vec![num(imm(1), life())],
+                        trigger: Some(CombatTrigger {
+                            target: CombatTarget::AllOther,
+                            watch: CombatTriggerWatch::ValueDecrease(life()),
+                        }),
+                    },
+                    CombatAbility {
+                        effects: vec![fx(
+                            CombatTarget::AbilitySource,
+                            vec![num(imm(-1), energy())],
+                        )],
+                        costs: vec![num(imm(1), energy())],
+                        trigger: Some(CombatTrigger {
+                            target: CombatTarget::AllOther,
+                            watch: CombatTriggerWatch::ValueDecrease(attack()),
+                        }),
+                    },
+                    CombatAbility {
+                        effects: vec![fx(CombatTarget::AllOther, vec![num(imm(-2), energy())])],
+                        costs: vec![num(imm(4), attack())],
+                        trigger: None,
+                    },
+                ],
+            },
+            // Trion
+            Unit {
+                name: format!("Trion"),
+                sprite_index: 12,
+                level: 1,
+                experience: 0,
+                max_experience: 10,
+                life: UnitValue::full(1),
+                attack: UnitValue::full(4),
+                energy: UnitValue::full(15),
+                owner: Owner::Enemy,
+                abilities: vec![CombatAbility {
+                    effects: vec![fx(
+                        CombatTarget::All,
+                        vec![num(src_unit_neg(attack()), life())],
+                    )],
+                    costs: vec![num(imm(10), energy())],
+                    trigger: None,
+                }],
+            },
+            // Zener
+            Unit {
+                name: format!("Zener"),
+                sprite_index: 9,
+                level: 1,
+                experience: 0,
+                max_experience: 10,
+                life: UnitValue::full(100),
+                attack: UnitValue::full(6),
+                energy: UnitValue::full(42),
+                owner: Owner::Enemy,
+                abilities: vec![
+                    CombatAbility {
+                        effects: vec![fx(CombatTarget::This, vec![num(imm(1), life())])],
+                        costs: vec![num(imm(4), energy())],
+                        trigger: Some(CombatTrigger {
+                            target: CombatTarget::This,
+                            watch: CombatTriggerWatch::ValueDecrease(life()),
+                        }),
+                    },
+                    CombatAbility {
+                        effects: vec![fx(
+                            CombatTarget::AbilitySource,
+                            vec![num(src_unit_neg(attack()), life())],
+                        )],
+                        costs: vec![num(imm(20), energy())],
+                        trigger: Some(CombatTrigger {
+                            target: CombatTarget::AllOtherAlly,
+                            watch: CombatTriggerWatch::ValueDecrease(life()),
+                        }),
+                    },
+                ],
+            },
         ];
+
+        for unit in &units {
+            for (i, ability) in unit.abilities.iter().enumerate() {
+                let mut costs = String::new();
+                for cost in &ability.costs {
+                    costs += &(cost.describe() + " ");
+                }
+                println!(
+                    "{:10}, L{}, A{}, E{}, for {}: {}",
+                    if i == 0 { &unit.name } else { "" },
+                    unit.life.current,
+                    unit.attack.current,
+                    unit.energy.current,
+                    costs,
+                    ability.describe()
+                );
+            }
+        }
 
         Blueprints { units }
     }
@@ -662,4 +867,8 @@ pub fn level_up(rng: &mut ChaCha8Rng) -> Vec<CombatNumber> {
             }
         })
         .collect()
+}
+
+pub fn price(unit: &Unit) -> i32 {
+    unit.level * 2 + 12 + unit.abilities.len() as i32 * 4
 }

@@ -5,9 +5,9 @@
 - [x] Transition combat/map
 - [x] Levels
 - [x] Experience/Money gain screen
+- [x] Unit shop
+- [x] Unit camp
 - [ ] Enemy squads
-- [ ] Unit shop
-- [ ] Unit camp
 - [ ] Balance units and squads
 - [ ] Playtest
 - [ ] Story/Game events

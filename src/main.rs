@@ -50,18 +50,34 @@ fn main() {
             .continue_to_state(GameStates::Map)
             .load_collection::<JamAssets>(),
     );
-    app.add_systems(OnExit(GameStates::AssetLoading), prepare_atlases);
-    app.add_systems(OnExit(GameStates::AssetLoading), spawn_camera);
+    app.add_systems(
+        OnExit(GameStates::AssetLoading),
+        (prepare_atlases, spawn_camera, spawn_zones),
+    );
     app.add_systems(OnExit(GameStates::Map), destroy_everything);
     app.add_systems(OnExit(GameStates::Combat), destroy_everything);
 
     app.add_systems(Update, debug_resolution);
+    app.add_systems(Update, (update_camp, bob_up_and_down, update_gold_tracker));
 
     let bp = Blueprints::construct();
     app.insert_resource(PartyState::construct(&bp));
     app.insert_resource(bp);
 
     app.add_plugins((CombatPlugin, MapPlugin));
+
+    app.add_systems(
+        Update,
+        (
+            ui_ability_trackers,
+            ui_value_trackers,
+            ui_name_trackers,
+            ui_level_trackers,
+            ui_experience_trackers,
+            update_particles,
+        )
+            .run_if(in_state(GameStates::Combat).or(in_state(GameStates::Map))),
+    );
 
     app.run();
 }
@@ -86,6 +102,9 @@ struct JamAssets {
 
     #[asset(path = "images/exp_bar.png")]
     exp_bar_image: Handle<Image>,
+
+    #[asset(path = "images/speed_dial.png")]
+    speed_dial_image: Handle<Image>,
 
     #[asset(path = "images/ability_background.png")]
     ability_background_image: Handle<Image>,
@@ -131,6 +150,9 @@ struct JamAssets {
     tile_tower_image: Handle<Image>,
     #[asset(path = "images/tile_castle.png")]
     tile_castle_image: Handle<Image>,
+
+    #[asset(path = "images/camp.png")]
+    camp_image: Handle<Image>,
 
     #[asset(path = "fonts/IosevkaFixed-Medium.subset.ttf")]
     font: Handle<Font>,
@@ -203,17 +225,13 @@ pub struct PartyState {
 
 impl PartyState {
     fn construct(bp: &Blueprints) -> Self {
-        let mut units = vec![
-            bp.units[0].clone(),
-            bp.units[1].clone(),
-            bp.units[2].clone(),
-        ];
+        let mut units = vec![bp.units[1].clone(), bp.units[2].clone()];
         for unit in &mut units {
             unit.owner = Owner::Player
         }
         Self {
             units,
-            gold: 10,
+            gold: 25,
             start_of_combat_units: vec![],
         }
     }
