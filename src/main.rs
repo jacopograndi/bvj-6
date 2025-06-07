@@ -50,10 +50,22 @@ fn main() {
             .continue_to_state(GameStates::Map)
             .load_collection::<JamAssets>(),
     );
+
+    app.add_systems(
+        OnEnter(GameStates::AssetLoading),
+        (spawn_camera, setup_loading_screen),
+    );
+
     app.add_systems(
         OnExit(GameStates::AssetLoading),
-        (prepare_atlases, spawn_camera, spawn_zones),
+        (
+            remove_loading_screen,
+            prepare_atlases,
+            spawn_zones,
+            setup_audio_tracks,
+        ),
     );
+
     app.add_systems(OnExit(GameStates::Map), destroy_everything);
     app.add_systems(OnExit(GameStates::Combat), destroy_everything);
 
@@ -80,6 +92,39 @@ fn main() {
     );
 
     app.run();
+}
+
+#[derive(Component)]
+struct LoadingScreen;
+
+fn setup_loading_screen(mut commands: Commands) {
+    commands.spawn((
+        LoadingScreen,
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        children![(
+            Text::new("Loading"),
+            Node {
+                width: Val::Px(150.0),
+                height: Val::Px(65.0),
+                border: UiRect::all(Val::Px(5.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+        )],
+    ));
+}
+
+fn remove_loading_screen(mut commands: Commands, query: Query<Entity, With<LoadingScreen>>) {
+    for entity in &query {
+        commands.entity(entity).despawn();
+    }
 }
 
 fn debug_resolution(mut gizmos: Gizmos, time: Res<Time>) {
@@ -156,6 +201,20 @@ struct JamAssets {
 
     #[asset(path = "fonts/IosevkaFixed-Medium.subset.ttf")]
     font: Handle<Font>,
+
+    #[asset(path = "audio/waong.mp3")]
+    map_track: Handle<AudioSource>,
+}
+
+fn setup_audio_tracks(mut commands: Commands, handles: Res<JamAssets>) {
+    commands.spawn((
+        AudioPlayer(handles.map_track.clone()),
+        PlaybackSettings {
+            mode: bevy::audio::PlaybackMode::Loop,
+            volume: bevy::audio::Volume::Linear(1.0),
+            ..default()
+        },
+    ));
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]
