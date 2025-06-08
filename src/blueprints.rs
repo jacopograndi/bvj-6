@@ -830,15 +830,23 @@ impl Blueprints {
                 for cost in &ability.costs {
                     costs += &(cost.describe_short() + " ");
                 }
-                println!(
-                    "{:10}, L{}, A{}, E{}, for {}: {}",
-                    if i == 0 { &unit.name } else { "" },
-                    unit.life.current,
-                    unit.attack.current,
-                    unit.energy.current,
-                    costs,
-                    ability.describe()
-                );
+                if i == 0 {
+                    println!(
+                        "\t- \"{}\": life: {}, attack: {}, energy {}\n\t\t- for {}: {}",
+                        &unit.name,
+                        unit.life.current,
+                        unit.attack.current,
+                        unit.energy.current,
+                        costs,
+                        ability.describe()
+                    );
+                } else {
+                    println!(
+                        "\t\t- for {}: {}",
+                        costs,
+                        ability.describe()
+                    );
+                }
             }
         }
 
