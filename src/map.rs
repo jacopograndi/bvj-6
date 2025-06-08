@@ -41,7 +41,6 @@ impl Plugin for MapPlugin {
         app.add_systems(
             Update,
             (
-                pull_up,
                 update_party_marker,
                 update_party_member_marker,
                 move_player_marker,
@@ -149,12 +148,6 @@ pub struct MapState {
 
 impl MapState {
     fn construct(bp: &Blueprints) -> Self {
-        let u = |index: usize| bp.units[index].clone();
-        let w = |index: usize| {
-            let mut unit = u(index);
-            unit.owner = Owner::Player;
-            unit
-        };
         let n = |s: &str, min, max| {
             PoolUnit::new(
                 bp.units.iter().find(|u| u.name == s).unwrap().clone(),
@@ -431,6 +424,23 @@ impl MapState {
                 n("Poppy", 12, 15),
                 n("Roth", 12, 15),
             ])],
+        );
+        enemy_pools.insert(
+            ivec2(1, 3),
+            vec![pool(
+                (5, 5),
+                vec![
+                    n("Thelonius", 12, 15),
+                    n("Joker", 12, 15),
+                    n("Spark", 12, 15),
+                    n("Scarlet", 12, 15),
+                    n("Luna", 12, 15),
+                    n("Poppy", 12, 15),
+                    n("Roth", 12, 15),
+                    n("Abad", 12, 15),
+                    n("Sylther", 12, 15),
+                ],
+            )],
         );
         enemy_pools.insert(
             ivec2(0, 4),
@@ -804,6 +814,28 @@ pub fn update_gold_tracker(
 pub fn spawn_gold(mut commands: Commands, handles: Res<JamAssets>) {
     commands.spawn((
         DestroyBetweenStates,
+        Transform::from_translation(Vec3::new(-500., -240., 200.)),
+        Visibility::Visible,
+        children![
+            (
+                Transform::from_scale(Vec3::splat(0.45)).with_translation(Vec3::new(0., 0., -1.)),
+                Sprite::from_image(handles.combat_back_image.clone()),
+            ),
+            (
+                Transform::from_translation(Vec3::new(0., -65., 220.)),
+                TextColor(Color::WHITE),
+                Text2d::new("Gold"),
+                TextFont {
+                    font: handles.font.clone(),
+                    font_size: 30.0,
+                    ..default()
+                },
+            )
+        ],
+    ));
+
+    commands.spawn((
+        DestroyBetweenStates,
         Transform::from_translation(Vec3::new(-500., -200., 200.)),
         Visibility::Visible,
         (children![
@@ -970,16 +1002,7 @@ fn spawn_unit_banner(commands: &mut Commands, handles: &JamAssets, unit: &Unit) 
             Visibility::Visible,
             Transform::default(),
             children![(
-                PullUp {
-                    source: Vec3::ZERO,
-                    destination: Vec3::Y * 140.,
-                    to_source: true,
-                    timer: {
-                        let mut timer = Timer::from_seconds(0.1, TimerMode::Once);
-                        timer.set_elapsed(Duration::from_millis(100));
-                        timer
-                    },
-                },
+                PullUp,
                 Transform::default().with_scale(Vec3::splat(0.6)),
                 unit_bundle(&handles, unit.sprite_index, unit.clone()),
             ),],
@@ -1002,12 +1025,7 @@ fn spawn_unit_banner(commands: &mut Commands, handles: &JamAssets, unit: &Unit) 
 }
 
 #[derive(Component)]
-struct PullUp {
-    source: Vec3,
-    destination: Vec3,
-    to_source: bool,
-    timer: Timer,
-}
+struct PullUp;
 
 #[derive(Component)]
 struct ArrowMoveFx;
@@ -1016,7 +1034,6 @@ struct ArrowMoveFx;
 struct PlayerMovementFx {
     from: Vec3,
     to: Vec3,
-    from_tilepos: IVec2,
     to_tilepos: IVec2,
     timer: Timer,
 }
@@ -1128,7 +1145,6 @@ fn on_click_tile(
     commands.entity(marker_entity).insert(PlayerMovementFx {
         from: source_tr.translation + Vec3::Z,
         to: target_tr.translation + Vec3::Z,
-        from_tilepos: tp_src.xy,
         to_tilepos: tp_dst.xy,
         timer: Timer::from_seconds(0.5, TimerMode::Once),
     });
@@ -1255,7 +1271,7 @@ fn on_over_tile(
 }
 
 fn on_out_tile(
-    trigger: Trigger<Pointer<Out>>,
+    _: Trigger<Pointer<Out>>,
     arrow_query: Query<Entity, With<ArrowMoveFx>>,
     mut commands: Commands,
 ) {
@@ -1266,7 +1282,6 @@ fn on_out_tile(
 
 fn on_over_pull_up(
     trigger: Trigger<Pointer<Over>>,
-    mut query: Query<&mut PullUp>,
     child_of_query: Query<&ChildOf>,
     children_query: Query<&Children>,
     bob_query: Query<Entity, With<BobUpAndDown>>,
@@ -1274,30 +1289,23 @@ fn on_over_pull_up(
     mut commands: Commands,
 ) {
     if let Ok(parent) = child_of_query.get(trigger.target()) {
-        if let Ok(children) = children_query.get(parent.0) {
-            if let Some(pullup_entity) = children.iter().find(|c| query.contains(*c)) {
-                if let Ok(mut pullup) = query.get_mut(pullup_entity) {
-                    pullup.to_source = false;
-                    pullup.timer.reset();
-
-                    // find map marker and bob faster
-                    if let Some(bob) = bob_query.iter().find(|e| {
-                        child_of_query
-                            .iter_ancestors(*e)
-                            .find(|a| {
-                                party_member_marker_query
-                                    .get(*a)
-                                    .ok()
-                                    .is_some_and(|marker| {
-                                        marker.marker_type == MarkerType::Player
-                                        //&& marker.marker_index == pullup.unit_index
-                                    })
+        if let Ok(_) = children_query.get(parent.0) {
+            // find map marker and bob faster
+            if let Some(bob) = bob_query.iter().find(|e| {
+                child_of_query
+                    .iter_ancestors(*e)
+                    .find(|a| {
+                        party_member_marker_query
+                            .get(*a)
+                            .ok()
+                            .is_some_and(|marker| {
+                                marker.marker_type == MarkerType::Player
+                                //&& marker.marker_index == pullup.unit_index
                             })
-                            .is_some()
-                    }) {
-                        commands.entity(bob).insert(BobUpAndDownFast);
-                    }
-                }
+                    })
+                    .is_some()
+            }) {
+                commands.entity(bob).insert(BobUpAndDownFast);
             }
         }
     }
@@ -1305,7 +1313,6 @@ fn on_over_pull_up(
 
 fn on_out_pull_down(
     trigger: Trigger<Pointer<Out>>,
-    mut query: Query<&mut PullUp>,
     child_of_query: Query<&ChildOf>,
     children_query: Query<&Children>,
     bob_query: Query<Entity, With<BobUpAndDown>>,
@@ -1313,69 +1320,25 @@ fn on_out_pull_down(
     mut commands: Commands,
 ) {
     if let Ok(parent) = child_of_query.get(trigger.target()) {
-        if let Ok(children) = children_query.get(parent.0) {
-            if let Some(pullup_entity) = children.iter().find(|c| query.contains(*c)) {
-                if let Ok(mut pullup) = query.get_mut(pullup_entity) {
-                    pullup.to_source = true;
-                    pullup.timer.reset();
-
-                    // find map marker and bob faster
-                    if let Some(bob) = bob_query.iter().find(|e| {
-                        child_of_query
-                            .iter_ancestors(*e)
-                            .find(|a| {
-                                party_member_marker_query
-                                    .get(*a)
-                                    .ok()
-                                    .is_some_and(|marker| {
-                                        marker.marker_type == MarkerType::Player
-                                        //&& marker.marker_index == pullup.unit_index
-                                    })
+        if let Ok(_) = children_query.get(parent.0) {
+            // find map marker and bob faster
+            if let Some(bob) = bob_query.iter().find(|e| {
+                child_of_query
+                    .iter_ancestors(*e)
+                    .find(|a| {
+                        party_member_marker_query
+                            .get(*a)
+                            .ok()
+                            .is_some_and(|marker| {
+                                marker.marker_type == MarkerType::Player
+                                //&& marker.marker_index == pullup.unit_index
                             })
-                            .is_some()
-                    }) {
-                        commands.entity(bob).remove::<BobUpAndDownFast>();
-                    }
-                }
+                    })
+                    .is_some()
+            }) {
+                commands.entity(bob).remove::<BobUpAndDownFast>();
             }
         }
-    }
-}
-
-fn pull_up(
-    mut query: Query<(Entity, &mut Transform, &mut PullUp)>,
-    child_of_query: Query<&ChildOf>,
-    player_unit_zone: Query<&PlayerUnitZone>,
-    hand_query: Query<&UnitInHand>,
-    time: Res<Time>,
-) {
-    return;
-    for (entity, mut tr, mut pullup) in &mut query {
-        if let Ok(parent) = child_of_query.get(entity) {
-            if let Ok(zone) = child_of_query.get(parent.0) {
-                if hand_query.contains(parent.0) && player_unit_zone.contains(zone.0) {
-                    pullup.timer.tick(time.delta());
-
-                    let (dest, pos) = if pullup.to_source {
-                        (pullup.source, pullup.destination)
-                    } else {
-                        (pullup.destination, pullup.source)
-                    };
-
-                    if pullup.timer.finished() {
-                        tr.translation = dest;
-                        continue;
-                    }
-
-                    let t = pullup.timer.fraction().powi(2);
-                    tr.translation = dest * t + pos * (1. - t);
-                }
-            }
-        }
-
-        pullup.to_source = true;
-        pullup.timer.reset();
-        tr.translation = pullup.source;
     }
 }
 
@@ -1688,7 +1651,7 @@ fn open_camp(
             .observe(on_over_color)
             .observe(on_out_color)
             .observe(
-                |trigger: Trigger<Pointer<Click>>,
+                |_: Trigger<Pointer<Click>>,
                  mut camp_zone_query: Query<&mut Transform, With<CampUnitZone>>| {
                     if let Ok(mut tr) = camp_zone_query.single_mut() {
                         tr.translation.x += 150.;
@@ -1733,7 +1696,7 @@ fn open_camp(
             .observe(on_over_color)
             .observe(on_out_color)
             .observe(
-                |trigger: Trigger<Pointer<Click>>,
+                |_: Trigger<Pointer<Click>>,
                  mut camp_zone_query: Query<&mut Transform, With<CampUnitZone>>| {
                     if let Ok(mut tr) = camp_zone_query.single_mut() {
                         tr.translation.x -= 150.;
@@ -1790,6 +1753,7 @@ fn on_click_pickup(
     camp_zone_query: Query<Entity, With<ToCampUnitZone>>,
     player_children_query: Query<&Children, With<PlayerUnitZone>>,
     handles: Res<JamAssets>,
+    muted: Res<SoundMuted>,
 ) {
     if !hand_query.is_empty() {
         return;
@@ -1847,6 +1811,9 @@ fn on_click_pickup(
             party.gold -= price_marker.price;
         }
     } else {
+        let mut rng = ChaCha8Rng::from_rng(thread_rng()).unwrap();
+        play_sound_rng(&mut commands, &handles.click_sound, &mut rng, &muted);
+
         println!("picked up");
         hand_cooldown.timer.reset();
         commands.entity(parent.0).remove::<ChildOf>();
@@ -1960,6 +1927,7 @@ fn on_click_zone(
     camp_opened_query: Query<(Entity, &CampOpened)>,
     banner_camp_query: Query<&CampUnitBanner>,
     banners_query: Query<&UnitBanner>,
+    muted: Res<SoundMuted>,
 ) {
     if !hand_cooldown.timer.finished() {
         return;
@@ -1987,6 +1955,7 @@ fn on_click_zone(
         for (e, _) in &hand_query {
             commands.entity(e).remove::<UnitInHand>();
         }
+        play_sound_speed(&mut commands, &handles.click_sound, 0.5, &muted);
     };
 
     let Ok((zone_entity, _, zone_children)) = player_zone_query.get(trigger.target()) else {
@@ -2204,7 +2173,17 @@ fn camp_unit_bundle(handles: &JamAssets, unit: &Unit) -> impl Bundle {
     )
 }
 
-pub fn update_camp(mut camp_unit_query: Query<(&mut CampUnit, &mut Transform)>, time: Res<Time>) {
+pub fn update_camp(
+    mut commands: Commands,
+    handles: Option<Res<JamAssets>>,
+    mut camp_unit_query: Query<(&mut CampUnit, &mut Transform)>,
+    to_camp_zone_query: Query<Entity, With<ToCampUnitZone>>,
+    time: Res<Time>,
+) {
+    let Some(handles) = handles else {
+        return;
+    };
+
     let mut rng = ChaCha8Rng::from_rng(thread_rng()).unwrap();
     for (mut camp_unit, mut tr) in &mut camp_unit_query {
         camp_unit.timer.tick(time.delta());
@@ -2227,6 +2206,37 @@ pub fn update_camp(mut camp_unit_query: Query<(&mut CampUnit, &mut Transform)>, 
         if d.length_squared() > 50. {
             tr.translation += d.normalize_or_zero() * time.delta_secs() * 30.;
         }
+    }
+
+    let Ok(camp) = to_camp_zone_query.single() else {
+        return;
+    };
+
+    if rng.gen_bool(0.1) {
+        let col = rng.gen_range(0.3..0.8);
+        commands.spawn((
+            Transform::from_translation(Vec3::new(rng.gen_range(-5.0..5.0), 40., 10.))
+                .with_scale(Vec3::ONE * 0.3),
+            Particle {
+                velocity: Vec3::new(rng.gen_range(-1.3..1.3), rng.gen_range(20.0..25.0), 0.),
+                drag: rng.gen_range(0.9997..0.9998),
+                lifetime: Timer::new(Duration::from_millis(20000), TimerMode::Once),
+                starting_alpha: 0.,
+                half_alpha: rng.gen_range(0.2..0.4),
+            },
+            Sprite {
+                flip_x: rng.gen_bool(0.5),
+                color: Color::srgb(col, col, col).with_alpha(0.),
+                ..Sprite::from_atlas_image(
+                    handles.icons_image.clone(),
+                    TextureAtlas {
+                        layout: handles.icons_layout.clone(),
+                        index: *[15, 14, 13, 13, 13].choose(&mut rng).unwrap(),
+                    },
+                )
+            },
+            ChildOf(camp),
+        ));
     }
 }
 

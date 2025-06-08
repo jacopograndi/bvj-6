@@ -42,6 +42,7 @@ fn main() {
     app.add_event::<OnCombatStep>();
 
     app.insert_resource(ClearColor(Color::srgb(0.1, 0.1, 0.1)));
+    app.insert_resource(SoundMuted { muted: false });
 
     app.init_state::<GameStates>();
 
@@ -63,14 +64,15 @@ fn main() {
             prepare_atlases,
             spawn_zones,
             setup_audio_tracks,
-        ),
+            spawn_ability_zoomed,
+        )
+            .chain(),
     );
 
     app.add_systems(OnExit(GameStates::Map), destroy_everything);
     app.add_systems(OnExit(GameStates::Combat), destroy_everything);
 
-    app.add_systems(Update, debug_resolution);
-    app.add_systems(Update, (update_camp, bob_up_and_down, update_gold_tracker));
+    app.add_systems(Update, (update_camp, bob_up_and_down, update_gold_tracker, update_ability_zoom));
 
     let bp = Blueprints::construct();
     app.insert_resource(PartyState::construct(&bp));
@@ -108,7 +110,7 @@ fn setup_loading_screen(mut commands: Commands) {
             ..default()
         },
         children![(
-            Text::new("Loading"),
+            Text::new("Loading assets..."),
             Node {
                 width: Val::Px(150.0),
                 height: Val::Px(65.0),
@@ -125,10 +127,6 @@ fn remove_loading_screen(mut commands: Commands, query: Query<Entity, With<Loadi
     for entity in &query {
         commands.entity(entity).despawn();
     }
-}
-
-fn debug_resolution(mut gizmos: Gizmos, time: Res<Time>) {
-    gizmos.rect_2d(Vec2::ZERO, Vec2::new(1280., 720.), Color::WHITE);
 }
 
 #[derive(AssetCollection, Resource, Clone)]
@@ -199,19 +197,232 @@ struct JamAssets {
     #[asset(path = "images/camp.png")]
     camp_image: Handle<Image>,
 
+    #[asset(path = "images/combat_back.png")]
+    combat_back_image: Handle<Image>,
+
+    #[asset(path = "images/slash.png")]
+    slash_image: Handle<Image>,
+
     #[asset(path = "fonts/IosevkaFixed-Medium.subset.ttf")]
     font: Handle<Font>,
 
     #[asset(path = "audio/waong.mp3")]
     map_track: Handle<AudioSource>,
+
+    #[asset(path = "audio/ow.mp3")]
+    ow_sound: Handle<AudioSource>,
+    #[asset(path = "audio/ow2.mp3")]
+    ow2_sound: Handle<AudioSource>,
+    #[asset(path = "audio/ow3.mp3")]
+    ow3_sound: Handle<AudioSource>,
+    #[asset(path = "audio/click.mp3")]
+    click_sound: Handle<AudioSource>,
+    #[asset(path = "audio/level_up.mp3")]
+    level_up_sound: Handle<AudioSource>,
+    #[asset(path = "audio/stack_up.mp3")]
+    stack_up_sound: Handle<AudioSource>,
+    #[asset(path = "audio/exp_up.mp3")]
+    exp_up_sound: Handle<AudioSource>,
 }
+
+#[derive(Component)]
+struct MusicTrack;
+
+#[derive(Resource)]
+pub struct SoundMuted {
+    pub muted: bool,
+}
+
+#[derive(Component)]
+struct TrackSlash;
+
+#[derive(Component)]
+struct SoundSlash;
 
 fn setup_audio_tracks(mut commands: Commands, handles: Res<JamAssets>) {
     commands.spawn((
         AudioPlayer(handles.map_track.clone()),
+        MusicTrack,
         PlaybackSettings {
             mode: bevy::audio::PlaybackMode::Loop,
-            volume: bevy::audio::Volume::Linear(1.0),
+            volume: bevy::audio::Volume::Linear(0.8),
+            ..default()
+        },
+    ));
+
+    commands
+        .spawn((
+            Pickable::default(),
+            Sprite::from_color(Color::BLACK.with_alpha(0.0), Vec2::new(60., 60.)),
+            Transform::from_translation(Vec3::new(540., 320., 400.)),
+            Visibility::Visible,
+            children![
+                (
+                    Transform::from_scale(Vec3::splat(0.4)).with_translation(Vec3::Z * 1.3),
+                    Sprite {
+                        color: Color::BLACK.with_alpha(0.0),
+                        ..Sprite::from_image(handles.slash_image.clone(),)
+                    },
+                    TrackSlash,
+                ),
+                (
+                    Transform::from_scale(Vec3::splat(0.4)).with_translation(Vec3::Z * 1.2),
+                    Sprite {
+                        color: Color::WHITE,
+                        ..Sprite::from_atlas_image(
+                            handles.icons_image.clone(),
+                            TextureAtlas {
+                                layout: handles.icons_layout.clone(),
+                                index: 11,
+                            },
+                        )
+                    },
+                ),
+                (
+                    Transform::from_scale(Vec3::splat(0.4)).with_translation(Vec3::Z),
+                    Sprite {
+                        color: Color::WHITE,
+                        ..Sprite::from_atlas_image(
+                            handles.icons_image.clone(),
+                            TextureAtlas {
+                                layout: handles.icons_layout.clone(),
+                                index: 4,
+                            },
+                        )
+                    },
+                ),
+            ],
+        ))
+        .observe(on_click_toggle_mute_tracks);
+
+    commands
+        .spawn((
+            Pickable::default(),
+            Sprite::from_color(Color::BLACK.with_alpha(0.0), Vec2::new(60., 60.)),
+            Transform::from_translation(Vec3::new(600., 320., 400.)),
+            Visibility::Visible,
+            children![
+                (
+                    Transform::from_scale(Vec3::splat(0.4)).with_translation(Vec3::Z * 1.3),
+                    Sprite {
+                        color: Color::BLACK.with_alpha(0.0),
+                        ..Sprite::from_image(handles.slash_image.clone(),)
+                    },
+                    SoundSlash,
+                ),
+                (
+                    Transform::from_scale(Vec3::splat(0.4)).with_translation(Vec3::Z * 1.2),
+                    Sprite {
+                        color: Color::WHITE,
+                        ..Sprite::from_atlas_image(
+                            handles.icons_image.clone(),
+                            TextureAtlas {
+                                layout: handles.icons_layout.clone(),
+                                index: 7,
+                            },
+                        )
+                    },
+                ),
+                (
+                    Transform::from_scale(Vec3::splat(0.4)).with_translation(Vec3::Z),
+                    Sprite {
+                        color: Color::WHITE,
+                        ..Sprite::from_atlas_image(
+                            handles.icons_image.clone(),
+                            TextureAtlas {
+                                layout: handles.icons_layout.clone(),
+                                index: 4,
+                            },
+                        )
+                    },
+                ),
+            ],
+        ))
+        .observe(on_click_toggle_mute_sounds);
+}
+
+fn on_click_toggle_mute_tracks(
+    _: Trigger<Pointer<Click>>,
+    mut music_controller: Query<&mut AudioSink, With<MusicTrack>>,
+    mut sound_query: Query<&mut Sprite, With<TrackSlash>>,
+) {
+    let Ok(mut sink) = music_controller.single_mut() else {
+        return;
+    };
+    sink.toggle_mute();
+    if let Ok(mut sprite) = sound_query.single_mut() {
+        if sink.is_muted() {
+            sprite.color = sprite.color.with_alpha(1.0);
+        } else {
+            sprite.color = sprite.color.with_alpha(0.0);
+        }
+    }
+}
+
+fn on_click_toggle_mute_sounds(
+    _: Trigger<Pointer<Click>>,
+    mut muted: ResMut<SoundMuted>,
+    mut sound_query: Query<&mut Sprite, With<SoundSlash>>,
+) {
+    muted.muted = !muted.muted;
+    if let Ok(mut sprite) = sound_query.single_mut() {
+        if muted.muted {
+            sprite.color = sprite.color.with_alpha(1.0);
+        } else {
+            sprite.color = sprite.color.with_alpha(0.0);
+        }
+    }
+}
+
+pub fn play_sound(commands: &mut Commands, sound: &Handle<AudioSource>, muted: &SoundMuted) {
+    if muted.muted {
+        return;
+    }
+    commands.spawn((
+        AudioPlayer(sound.clone()),
+        PlaybackSettings {
+            mode: bevy::audio::PlaybackMode::Despawn,
+            volume: bevy::audio::Volume::Linear(0.3),
+            ..default()
+        },
+    ));
+}
+
+pub fn play_sound_rng(
+    commands: &mut Commands,
+    sound: &Handle<AudioSource>,
+    rng: &mut ChaCha8Rng,
+    muted: &SoundMuted,
+) {
+    if muted.muted {
+        return;
+    }
+    commands.spawn((
+        AudioPlayer(sound.clone()),
+        PlaybackSettings {
+            mode: bevy::audio::PlaybackMode::Despawn,
+            volume: bevy::audio::Volume::Linear(rng.gen_range(0.25..0.35)),
+            speed: rng.gen_range(0.9..1.1),
+            ..default()
+        },
+    ));
+}
+
+pub fn play_sound_speed(
+    commands: &mut Commands,
+    sound: &Handle<AudioSource>,
+    speed: f32,
+    muted: &SoundMuted,
+) {
+    if muted.muted {
+        return;
+    }
+    commands.spawn((
+        AudioPlayer(sound.clone()),
+        PlaybackSettings {
+            mode: bevy::audio::PlaybackMode::Despawn,
+            volume: bevy::audio::Volume::Linear(0.5),
+            speed,
             ..default()
         },
     ));

@@ -1,3 +1,5 @@
+use rand::seq::IteratorRandom;
+
 use crate::*;
 
 pub struct CombatPlugin;
@@ -15,6 +17,7 @@ impl Plugin for CombatPlugin {
                 setup_combo_animation,
                 spawn_units,
                 spawn_gold,
+                spawn_turn_counter,
                 reset_combat,
                 spawn_auto_step_controls,
             ),
@@ -40,10 +43,49 @@ impl Plugin for CombatPlugin {
                 update_particles,
                 end_combat_sequence,
                 auto_step,
+                update_ui_turn_speed_trackers,
             )
                 .run_if(in_state(GameStates::Combat)),
         );
     }
+}
+
+#[derive(Component)]
+struct UiTurnTracker;
+
+pub fn spawn_turn_counter(mut commands: Commands, handles: Res<JamAssets>) {
+    commands.spawn((
+        DestroyBetweenStates,
+        Transform::from_translation(Vec3::new(-500., 240., 200.)),
+        Visibility::Visible,
+        children![
+            (
+                Transform::from_scale(Vec3::splat(0.45)).with_translation(Vec3::new(0., 0., -1.)),
+                Sprite::from_image(handles.combat_back_image.clone()),
+            ),
+            (
+                Transform::from_translation(Vec3::new(0., 30., 2.)),
+                TextColor(Color::WHITE),
+                Text2d::new("Turn"),
+                TextFont {
+                    font: handles.font.clone(),
+                    font_size: 30.0,
+                    ..default()
+                },
+            ),
+            (
+                Transform::from_translation(Vec3::new(0., -30., 2.)),
+                TextColor(Color::WHITE),
+                Text2d::new("0/100"),
+                TextFont {
+                    font: handles.font.clone(),
+                    font_size: 30.0,
+                    ..default()
+                },
+                UiTurnTracker,
+            )
+        ],
+    ));
 }
 
 #[derive(Resource)]
@@ -75,10 +117,31 @@ fn on_slider_drag(
             stepper.timer.unpause();
             stepper
                 .timer
-                .set_duration(Duration::from_secs_f32(1.01 - t));
+                .set_duration(Duration::from_secs_f32((1.01 - t).max(0.016)));
         }
     }
 }
+
+fn update_ui_turn_speed_trackers(
+    mut turn_trackers_query: Query<&mut Text2d, With<UiTurnTracker>>,
+    mut speed_trackers_query: Query<&mut Text2d, (With<UiSpeedTracker>, Without<UiTurnTracker>)>,
+    state: Res<CombatState>,
+    stepper: Res<AutoStepper>,
+) {
+    for mut text in &mut turn_trackers_query {
+        text.0 = format!("{}/100", state.turn_number);
+    }
+    for mut text in &mut speed_trackers_query {
+        if stepper.timer.paused() {
+            text.0 = format!("Paused");
+        } else {
+            text.0 = format!("{}ms", stepper.timer.duration().as_millis());
+        }
+    }
+}
+
+#[derive(Component)]
+struct UiSpeedTracker;
 
 fn spawn_auto_step_controls(
     mut commands: Commands,
@@ -87,7 +150,52 @@ fn spawn_auto_step_controls(
 ) {
     commands.spawn((
         DestroyBetweenStates,
-        Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(-550., 100., 200.)),
+        Transform::from_translation(Vec3::new(-500., 0., 200.)),
+        Visibility::Visible,
+        children![
+            (
+                Transform::from_scale(Vec3::splat(0.45)).with_translation(Vec3::new(0., 0., -1.)),
+                Sprite::from_image(handles.combat_back_image.clone()),
+            ),
+            (
+                Transform::from_translation(Vec3::new(0., 50., 0.)),
+                TextColor(Color::WHITE),
+                Text2d::new("Speed"),
+                TextFont {
+                    font: handles.font.clone(),
+                    font_size: 30.0,
+                    ..default()
+                },
+            ),
+            (
+                Transform::from_translation(Vec3::new(0., 20., 0.)),
+                TextColor(Color::WHITE),
+                Text2d::new("30ms"),
+                UiSpeedTracker,
+                TextFont {
+                    font: handles.font.clone(),
+                    font_size: 20.0,
+                    ..default()
+                },
+            ),
+            (
+                Transform::from_translation(Vec3::new(20., -70., 2.)),
+                TextColor(Color::srgb(0.5, 0.5, 0.5)),
+                TextLayout::new(JustifyText::Left, LineBreak::WordBoundary),
+                TextBounds::from(Vec2::new(120., 140.)),
+                Text2d::new("Move the handle to set the speed.\n\nBackspace: step once\nSpace: pause\nEnter: max speed!"),
+                TextFont {
+                    font: handles.font.clone(),
+                    font_size: 10.0,
+                    ..default()
+                },
+            )
+        ],
+    ));
+
+    commands.spawn((
+        DestroyBetweenStates,
+        Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(-580., 100., 200.)),
         Visibility::Visible,
         children![
             (
@@ -120,7 +228,7 @@ fn spawn_auto_step_controls(
     ));
     commands.spawn((
         DestroyBetweenStates,
-        Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(-550., -0., 200.)),
+        Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(-580., -0., 200.)),
         Visibility::Visible,
         children![(
             Transform::from_translation(Vec3::ZERO),
@@ -134,15 +242,15 @@ fn spawn_auto_step_controls(
         .spawn((
             DestroyBetweenStates,
             Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(
-                -550.,
+                -580.,
                 stepper.slider_value,
                 201.,
             )),
             Visibility::Visible,
             ButtonColorTarget,
             AutoStepperSlider {
-                min: -80.,
-                max: 80.,
+                min: -60.,
+                max: 60.,
             },
             Pickable::default(),
             Sprite {
@@ -161,7 +269,7 @@ fn spawn_auto_step_controls(
         .observe(on_slider_drag);
     commands.spawn((
         DestroyBetweenStates,
-        Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(-550., -100., 200.)),
+        Transform::from_scale(Vec3::splat(0.5)).with_translation(Vec3::new(-580., -100., 200.)),
         Visibility::Visible,
         children![
             (
@@ -476,6 +584,15 @@ pub struct CombatNumber {
 }
 
 impl CombatNumber {
+    pub fn describe_short(&self) -> String {
+        match &self.source {
+            CombatNumberSource::Immediate(amt) => {
+                format!("{} {}", amt, self.values.describe())
+            }
+            _ => format!("n/a"),
+        }
+    }
+
     pub fn describe(&self) -> String {
         match &self.source {
             CombatNumberSource::Immediate(amt) => {
@@ -1154,8 +1271,6 @@ pub fn ui_level_trackers(
     mut commands: Commands,
     handles: Res<JamAssets>,
 ) {
-    let mut rng = ChaCha8Rng::from_rng(thread_rng()).unwrap();
-
     for (tracker_entity, mut ui_tracker, mut text, gtr) in &mut trackers_query {
         if let Some(unit) = child_of_query
             .iter_ancestors(tracker_entity)
@@ -1174,7 +1289,7 @@ pub fn ui_level_trackers(
                             DestroyBetweenStates,
                             Transform::from_translation(gtr.translation() + Vec3::X * 100.),
                             Visibility::Visible,
-                            particle_level_bundle(&handles, &mut rng),
+                            particle_level_bundle(&handles),
                         ));
                     }
                 }
@@ -1283,13 +1398,11 @@ fn ui_ability_cost_single_bundle(
                             UnitValues::Life => "+".to_string(),
                             UnitValues::Attack => "+".to_string(),
                             UnitValues::Energy => "+".to_string(),
-                            _ => String::new(),
                         },
                         CombatNumberSource::UnitNegated(v) => match v {
                             UnitValues::Life => "-".to_string(),
                             UnitValues::Attack => "-".to_string(),
                             UnitValues::Energy => "-".to_string(),
-                            _ => String::new(),
                         },
                     }
                 )),
@@ -1367,11 +1480,84 @@ fn ui_filled_ability_bundle(handles: &JamAssets, ability: CombatAbility) -> impl
     )
 }
 
-fn ui_ability_bundle(handles: &JamAssets, index: usize) -> impl Bundle {
+fn ui_ability_bundle(index: usize) -> impl Bundle {
     (UiAbilityTracker {
         ability: None,
         index,
     },)
+}
+
+#[derive(Component)]
+pub struct AbilityZoomed;
+#[derive(Component)]
+pub struct AbilityZoomedText;
+
+#[derive(Component)]
+pub struct AbilityZoom {
+    pub ability: CombatAbility,
+}
+
+pub fn spawn_ability_zoomed(mut commands: Commands, handles: Res<JamAssets>) {
+    commands.spawn((
+        Transform::from_translation(Vec3::Z * 2.),
+        Visibility::Hidden,
+        AbilityZoomed,
+        children![
+            (
+                Visibility::Inherited,
+                AbilityZoomedText,
+                Transform::from_translation(Vec3::new(0., 0., 0.)),
+                TextColor(Color::BLACK),
+                Text2d::new(""),
+                TextLayout::new(JustifyText::Left, LineBreak::WordBoundary),
+                TextBounds::from(Vec2::new(280., 80.)),
+                TextFont {
+                    font: handles.font.clone(),
+                    font_size: 16.,
+                    ..default()
+                },
+            ),
+            (
+                Visibility::Inherited,
+                Transform::from_scale(Vec3::splat(0.8)),
+                Sprite::from_image(handles.ability_background_image.clone(),),
+            ),
+        ],
+    ));
+}
+
+pub fn update_ability_zoom(
+    zoom_query: Query<(&GlobalTransform, &AbilityZoom)>,
+    mut zoomed_query: Query<(Entity, &mut Transform, &AbilityZoomed)>,
+    mut zoomed_text_query: Query<(&mut Text2d, &AbilityZoomedText)>,
+    mut commands: Commands,
+) {
+    let Ok((entity, mut tr, _)) = zoomed_query.single_mut() else {
+        return;
+    };
+
+    if let Ok((gtr, zoom)) = zoom_query.single() {
+        commands.entity(entity).insert(Visibility::Visible);
+
+        // show bigger ability
+        let Ok((mut text, _)) = zoomed_text_query.single_mut() else {
+            return;
+        };
+
+        tr.translation = gtr.translation() + Vec3::Z * 1.1;
+
+        let mut costs = String::new();
+        for cost in &zoom.ability.costs {
+            costs += &(cost.describe_short() + " ");
+        }
+        if costs.is_empty() {
+            costs = format!("Nothing");
+        }
+
+        text.0 = format!("Activate by paying: {}\n{}", costs, zoom.ability.describe());
+    } else {
+        commands.entity(entity).insert(Visibility::Hidden);
+    }
 }
 
 pub fn ui_ability_trackers(
@@ -1389,12 +1575,33 @@ pub fn ui_ability_trackers(
             {
                 if let Some(ability) = unit.abilities.get(ui_tracker.index) {
                     let e = commands
-                        .spawn((
-                            DestroyBetweenStates,
-                            ui_filled_ability_bundle(&handles, ability.clone()),
-                        ))
+                        .spawn((ui_filled_ability_bundle(&handles, ability.clone()),))
                         .id();
                     commands.entity(tracker_entity).add_child(e);
+
+                    let cloned_ability = ability.clone();
+                    let e = commands
+                        .spawn((
+                            Pickable {
+                                should_block_lower: false,
+                                is_hoverable: true,
+                            },
+                            Sprite::from_color(Color::WHITE.with_alpha(0.0), Vec2::new(180., 50.)),
+                            Transform::from_translation(Vec3::Z * 10.),
+                        ))
+                        .observe(
+                            move |trigger: Trigger<Pointer<Over>>, mut commands: Commands| {
+                                commands.entity(trigger.target()).insert(AbilityZoom {
+                                    ability: cloned_ability.clone(),
+                                });
+                            },
+                        )
+                        .observe(|trigger: Trigger<Pointer<Out>>, mut commands: Commands| {
+                            commands.entity(trigger.target()).remove::<AbilityZoom>();
+                        })
+                        .id();
+                    commands.entity(tracker_entity).add_child(e);
+
                     ui_tracker.ability = Some(ability.clone());
                 }
             } else {
@@ -1485,14 +1692,18 @@ pub struct Particle {
     pub velocity: Vec3,
     pub drag: f32,
     pub lifetime: Timer,
+    pub starting_alpha: f32,
+    pub half_alpha: f32,
 }
 
-pub fn particle_level_bundle(handles: &JamAssets, rng: &mut ChaCha8Rng) -> impl Bundle {
+pub fn particle_level_bundle(handles: &JamAssets) -> impl Bundle {
     (
         Particle {
             velocity: Vec3::new(0., 100., 0.),
             drag: 0.99,
             lifetime: Timer::new(Duration::from_millis(1000), TimerMode::Once),
+            starting_alpha: 1.0,
+            half_alpha: 0.5,
         },
         children![
             (
@@ -1537,6 +1748,8 @@ pub fn particle_value_bundle(
             ),
             drag: rng.gen_range(0.97..0.99),
             lifetime: Timer::new(Duration::from_millis(800), TimerMode::Once),
+            starting_alpha: 1.0,
+            half_alpha: 0.5,
         },
         Sprite::from_atlas_image(
             handles.icons_image.clone(),
@@ -1581,7 +1794,10 @@ pub fn update_particles(
         }
 
         if let Some(mut sprite) = sprite {
-            sprite.color.set_alpha(1. - particle.lifetime.fraction());
+            let t = particle.lifetime.fraction();
+            let interp = particle.starting_alpha * (1. - t)
+                + particle.half_alpha * (1. - (t * 2. - 1.).abs());
+            sprite.color.set_alpha(interp);
         }
 
         tr.translation += particle.velocity * time.delta_secs();
@@ -1651,17 +1867,17 @@ pub fn unit_bundle(handles: &JamAssets, index: usize, unit: Unit) -> impl Bundle
             ),
             (
                 Transform::from_translation(Vec3::new(0., -200., 0.)),
-                ui_ability_bundle(&handles, 0),
+                ui_ability_bundle(0),
                 Visibility::Visible,
             ),
             (
                 Transform::from_translation(Vec3::new(0., -260., 0.)),
-                ui_ability_bundle(&handles, 1),
+                ui_ability_bundle(1),
                 Visibility::Visible,
             ),
             (
                 Transform::from_translation(Vec3::new(0., -320., 0.)),
-                ui_ability_bundle(&handles, 2),
+                ui_ability_bundle(2),
                 Visibility::Visible,
             ),
             (
@@ -1769,7 +1985,6 @@ fn update_combo_animation(
 
 #[derive(Component, Debug, Clone)]
 struct ActivatedAbilityFx {
-    ability: ActivatedAbility,
     stack_height: usize,
 }
 
@@ -1779,21 +1994,30 @@ fn stack_animation(
     fx_query: Query<(Entity, &ActivatedAbilityFx)>,
     units_query: Query<(Entity, &Unit, &Transform)>,
     handles: Res<JamAssets>,
+    muted: Res<SoundMuted>,
 ) {
     for (h, activated_ability) in state.stack.iter().enumerate() {
         if let None = fx_query.iter().find(|(_, ab)| ab.stack_height == h) {
             // find source
-            let Some((unit_entity, unit, source_tr)) = units_query
+            let Some((_, unit, source_tr)) = units_query
                 .iter()
                 .find(|(u, _, _)| u == &activated_ability.source)
             else {
                 continue;
             };
 
+            if h > 2 {
+                play_sound_speed(
+                    &mut commands,
+                    &handles.stack_up_sound,
+                    0.5 + 0.1 * h as f32,
+                    &muted,
+                );
+            }
+
             for target in &activated_ability.targets {
                 // find target
-                let Some((target_entity, target, target_tr)) =
-                    units_query.iter().find(|(u, _, _)| u == target)
+                let Some((_, _, target_tr)) = units_query.iter().find(|(u, _, _)| u == target)
                 else {
                     continue;
                 };
@@ -1830,10 +2054,7 @@ fn stack_animation(
                         DestroyBetweenStates,
                         Transform::default(),
                         Visibility::Visible,
-                        ActivatedAbilityFx {
-                            ability: activated_ability.clone(),
-                            stack_height: h,
-                        },
+                        ActivatedAbilityFx { stack_height: h },
                     ))
                     .id();
 
@@ -1841,7 +2062,6 @@ fn stack_animation(
                 for (i, gain) in activated_ability.gains.iter().enumerate() {
                     let sg = commands
                         .spawn((
-                            DestroyBetweenStates,
                             Transform::from_translation(
                                 thirds[2].extend(30.3 + h as f32)
                                     + Vec3::new(30. * i as f32, 0., 0.),
@@ -1925,7 +2145,6 @@ fn stack_animation(
                     };
                     let sg = commands
                         .spawn((
-                            DestroyBetweenStates,
                             Transform::from_translation(pos.extend(30. + h as f32))
                                 .with_rotation(rot),
                             Visibility::Visible,
@@ -1954,8 +2173,20 @@ fn stack_animation(
         }
     }
 
+    let mut rng = ChaCha8Rng::from_rng(thread_rng()).unwrap();
+
     for (entity, fx) in &fx_query {
         if fx.stack_height >= state.stack.len() {
+            play_sound_rng(
+                &mut commands,
+                [&handles.ow2_sound, &handles.ow3_sound, &handles.ow_sound]
+                    .iter()
+                    .choose(&mut rng)
+                    .unwrap(),
+                &mut rng,
+                &muted,
+            );
+
             commands.entity(entity).despawn();
         }
     }
@@ -1996,7 +2227,7 @@ pub fn on_out_color(
 }
 
 fn on_click_goto_map(
-    trigger: Trigger<Pointer<Click>>,
+    _: Trigger<Pointer<Click>>,
     mut next_game_state: ResMut<NextState<GameStates>>,
 ) {
     next_game_state.set(GameStates::Map);
@@ -2036,7 +2267,7 @@ fn spawn_units(
 struct EndFx;
 
 fn detect_end(
-    mut state: ResMut<CombatState>,
+    state: Res<CombatState>,
     mut commands: Commands,
     handles: Res<JamAssets>,
     units_query: Query<(Entity, &Unit)>,
@@ -2258,9 +2489,9 @@ fn end_combat_sequence(
     seq_unit_marker_query: Query<(Entity, &SeqUnitMarker)>,
     mut commands: Commands,
     handles: Res<JamAssets>,
-    map: Res<MapState>,
     party: Res<PartyState>,
     time: Res<Time>,
+    muted: Res<SoundMuted>,
 ) {
     let Ok(mut seq) = query.single_mut() else {
         return;
@@ -2350,7 +2581,7 @@ fn end_combat_sequence(
     if !seq.heal_everybody {
         seq.heal_everybody = true;
         for (i, unit) in party.start_of_combat_units.iter().enumerate() {
-            if let Some((e, _)) = seq_unit_marker_query.iter().find(|(_, m)| m.0 == i) {
+            if let Some((_, _)) = seq_unit_marker_query.iter().find(|(_, m)| m.0 == i) {
                 /*
                 if let Ok((_, mut existing_unit)) = units_query.get_mut(e) {
                     *existing_unit = unit.clone();
@@ -2387,6 +2618,10 @@ fn end_combat_sequence(
 
                     if !gains.is_empty() {
                         unit.level += 1;
+
+                        play_sound(&mut commands, &handles.level_up_sound, &muted);
+                    } else {
+                        play_sound(&mut commands, &handles.exp_up_sound, &muted);
                     }
 
                     for gain in gains {

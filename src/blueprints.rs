@@ -30,7 +30,7 @@ impl Blueprints {
         let energy = || UnitValues::Energy;
 
         let imm = |amt| CombatNumberSource::Immediate(amt);
-        let src_unit = |v| CombatNumberSource::Unit(v);
+        //let src_unit = |v| CombatNumberSource::Unit(v);
         let src_unit_neg = |v| CombatNumberSource::UnitNegated(v);
 
         let num = |s, v| CombatNumber {
@@ -40,6 +40,7 @@ impl Blueprints {
 
         let fx = |target, gains| CombatEffect { target, gains };
 
+        /*
         // effects shorthands
         let damage_mostlife_withattack = CombatEffect {
             target: CombatTarget::EnemyWithMost(UnitValues::Life),
@@ -121,7 +122,6 @@ impl Blueprints {
             target: CombatTarget::This,
             watch: CombatTriggerWatch::ValueDecrease(UnitValues::Attack),
         };
-
         // crazy units
         let units = vec![
             Unit {
@@ -365,6 +365,7 @@ impl Blueprints {
                 ],
             },
         ];
+        */
 
         let units = vec![
             // basic attack
@@ -827,7 +828,7 @@ impl Blueprints {
             for (i, ability) in unit.abilities.iter().enumerate() {
                 let mut costs = String::new();
                 for cost in &ability.costs {
-                    costs += &(cost.describe() + " ");
+                    costs += &(cost.describe_short() + " ");
                 }
                 println!(
                     "{:10}, L{}, A{}, E{}, for {}: {}",
